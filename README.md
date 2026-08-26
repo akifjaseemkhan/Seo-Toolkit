@@ -22,6 +22,59 @@ This is not a website. It contains no business-specific content, no fixture data
 | [`docs/`](docs) | Installation, usage, and reference documentation for people setting this up. |
 | [`tools/`](tools) | Optional, read-only local inspection CLI (`tools/seo-tool`, zero dependencies) that crawls a site and extracts real SEO facts — see [`docs/tooling.md`](docs/tooling.md). Never required; workflows fall back to manual/source inspection without it. |
 
+## Architecture
+
+The repository is two layers that stay strictly separate, reasoned over by an AI agent that applies a fixed loop to the real project. See [SKILL.md](SKILL.md) for the authoritative version of the loop and [rules/implementation-safety.md](rules/implementation-safety.md) for the full risk-category table.
+
+**Knowledge layer** — the SEO reasoning itself, and the only place decisions are made: [`rules/`](rules), [`workflows/`](workflows), [`checklists/`](checklists), [`frameworks/`](frameworks), [`templates/`](templates).
+
+**Fact-gathering layer** — [`tools/seo-tool`](tools/seo-tool), a read-only CLI (`crawl`, `page`, `links`, `sitemap`, `robots`, `audit`, plus a `project` command for local source inspection) that fetches real pages, `sitemap.xml`, and `robots.txt`, then extracts structured JSON evidence — see [docs/tooling.md](docs/tooling.md). **These tools only collect and report facts. They never decide severity, priority, or what to do about a finding** — that interpretation always happens in the knowledge layer, applied by the agent.
+
+The agent reasons over both layers together and runs this loop against the target project:
+
+```
+AUDIT (read-only) → PLAN → RISK CHECK → FIX (smallest safe change) → VERIFY → REPORT
+```
+
+Every change is sorted into a risk category before it happens (`rules/implementation-safety.md`). Category A (safe, additive) and Category B (moderate, reversible) proceed through FIX directly. **Category C — hard to reverse, large blast radius, or adjacent to protected functionality such as routing, rendering strategy, or auth — always stops at an explicit approval gate before implementation**, requiring the agent to explain the risk and get a specific yes. Category D (external systems like DNS or Search Console) is never implemented, only reported.
+
+```mermaid
+flowchart TD
+    subgraph Knowledge["Knowledge Layer"]
+        R[rules/]
+        W[workflows/]
+        C[checklists/]
+        F[frameworks/]
+        T[templates/]
+    end
+
+    subgraph Tools["Fact-Gathering Layer (tools/seo-tool)"]
+        CR[crawl]
+        PG[page]
+        LK[links]
+        SM[sitemap]
+        RB[robots]
+        AU[audit]
+    end
+
+    Knowledge --> Agent["AI Agent (reasoning layer)"]
+    Tools -- "structured JSON evidence" --> Agent
+
+    Agent --> Audit["AUDIT (read-only)"]
+    Audit --> Plan[PLAN]
+    Plan --> Risk{RISK CHECK}
+    Risk -- "Category A/B" --> Fix["FIX (smallest safe change)"]
+    Risk -- "Category C: high risk" --> Gate["Explicit approval gate"]
+    Gate -- approved --> Fix
+    Gate -- declined --> Report[REPORT]
+    Fix --> Verify[VERIFY]
+    Verify --> Report
+
+    Audit -.-> Project["Real Project"]
+    Fix -.-> Project
+    Verify -.-> Project
+```
+
 ## What it can do
 
 Technical SEO audits, on-page optimization, keyword research and search-intent analysis, information architecture and internal linking, content strategy and content optimization, programmatic SEO risk evaluation, structured data (Schema.org/JSON-LD), sitemap and robots.txt management, indexing diagnosis, Core Web Vitals-relevant performance review, JavaScript/SPA rendering audits across CSR/SSR/SSG/ISR, e-commerce, SaaS, local, international, and multilingual SEO, image SEO, ethical backlink/authority strategy, competitor analysis, Google Search Console workflows, monitoring cadence, post-implementation verification, and stakeholder-ready reporting.
