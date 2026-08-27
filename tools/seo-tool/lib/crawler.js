@@ -45,9 +45,10 @@ export async function crawl(startUrl, options = {}) {
     respectRobots = true,
     userAgent,
     robotsUserAgent = '*',
+    allowPrivateNetwork = false,
   } = options;
 
-  const resolvedOptions = { maxPages, delayMs, concurrency, timeoutMs, includeExternal, respectRobots };
+  const resolvedOptions = { maxPages, delayMs, concurrency, timeoutMs, includeExternal, respectRobots, allowPrivateNetwork };
   const errors = [];
   const warnings = [];
 
@@ -57,7 +58,7 @@ export async function crawl(startUrl, options = {}) {
 
   let robotsInfo = { found: false, parsed: { groups: [], sitemaps: [], unknownDirectives: [] }, robotsUrl: null };
   if (respectRobots) {
-    robotsInfo = await fetchRobotsForOrigin(startUrl, { timeoutMs, userAgent });
+    robotsInfo = await fetchRobotsForOrigin(startUrl, { timeoutMs, userAgent, allowPrivateNetwork });
     if (!robotsInfo.found && robotsInfo.fetchError) {
       warnings.push(`robots.txt not available (${robotsInfo.fetchError}) — crawling without robots restrictions.`);
     }
@@ -109,6 +110,7 @@ export async function crawl(startUrl, options = {}) {
           timeoutMs,
           userAgent,
           readBody: !isExternalUrl, // don't bother downloading external page bodies
+          allowPrivateNetwork,
         });
 
         if (fetchResult.error) {

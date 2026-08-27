@@ -212,6 +212,8 @@ These are reported as external configuration work, per `SKILL.md`'s "When someth
 
 See [docs/safety.md](docs/safety.md) for the full breakdown.
 
+These govern the risk of a *change this skill makes to a site* — a separate concern from the fact-gathering tool's own network safety: `tools/seo-tool` refuses by default to fetch private/internal network addresses (on every URL it fetches, including every redirect hop), so pointing it at an untrusted URL can't be turned into a probe of your own internal network. See [docs/tooling.md](docs/tooling.md#private-network-protection-a-safety-boundary-not-an-seo-feature) for details.
+
 ## Installing this into a project
 
 See [docs/installation.md](docs/installation.md). In short: copy this folder into the target project (or a global location your agent reads from), keep the internal structure intact, point your AI agent at `SKILL.md`, and start a session — no configuration step is required. Claude Code users get automatic discovery for free via the `SKILL.md` convention; every other agent works the same way once it's told to read the file.

@@ -56,9 +56,9 @@ async function emit(report, flags, printSummary) {
   }
 }
 
-function readLocalOrFetch(target, timeoutMs) {
+function readLocalOrFetch(target, timeoutMs, allowPrivateNetwork = false) {
   if (/^https?:\/\//i.test(target)) {
-    return fetchFollowingRedirects(target, { timeoutMs }).then((result) => ({
+    return fetchFollowingRedirects(target, { timeoutMs, allowPrivateNetwork }).then((result) => ({
       text: result.error ? null : result.body,
       source: target,
       finalUrl: result.finalUrl,
@@ -202,7 +202,8 @@ function printProjectSummary(facts) {
 async function cmdPage(url, flags) {
   const startedAt = new Date().toISOString();
   const timeoutMs = num(flags, 'timeout', DEFAULT_TIMEOUT_MS);
-  const result = await fetchFollowingRedirects(url, { timeoutMs });
+  const allowPrivateNetwork = !!flags['allow-private-network'];
+  const result = await fetchFollowingRedirects(url, { timeoutMs, allowPrivateNetwork });
   let facts = null;
   if (!result.error && /text\/html|application\/xhtml\+xml/i.test(result.contentType || '') && result.body) {
     facts = extractSeoFacts(result.body, result.finalUrl, {
@@ -222,7 +223,7 @@ async function cmdPage(url, flags) {
   const report = assembleReport({
     command: 'page',
     target: url,
-    options: { timeoutMs },
+    options: { timeoutMs, allowPrivateNetwork },
     startedAt,
     crawlResult: { startUrl: url, pages: [page], errors: result.error ? [{ url, message: result.error.message }] : [], warnings: [], truncatedByMaxPages: false, robots: null },
   });
@@ -239,6 +240,7 @@ async function cmdCrawl(url, flags, commandName = 'crawl') {
     timeoutMs: num(flags, 'timeout', 10000),
     includeExternal: !!flags['include-external'],
     respectRobots: !flags['no-robots'],
+    allowPrivateNetwork: !!flags['allow-private-network'],
   };
   const crawlResult = await crawl(url, options);
   const linkGraph = buildLinkGraph(crawlResult.pages, url);
@@ -256,7 +258,8 @@ async function cmdSitemap(target, flags) {
   // still honestly reports its children as skipped rather than just
   // vanishing, instead of maintaining a second, duplicate parse path.
   const maxDepth = flags['no-recurse'] ? 0 : num(flags, 'max-sitemap-depth', 5);
-  const { text, source, fetchError } = await readLocalOrFetch(target, timeoutMs);
+  const allowPrivateNetwork = !!flags['allow-private-network'];
+  const { text, source, fetchError } = await readLocalOrFetch(target, timeoutMs, allowPrivateNetwork);
 
   const isUrl = /^https?:\/\//i.test(target);
   let sitemapResult;
@@ -280,6 +283,7 @@ async function cmdSitemap(target, flags) {
       maxSitemaps,
       maxDepth,
       seedText: text,
+      allowPrivateNetwork,
     });
     const rootNode = tree.sitemapsProcessed[0];
     const rootType = rootNode ? rootNode.type : 'error';
@@ -303,27 +307,28 @@ async function cmdSitemap(target, flags) {
     sitemapResult.statusChecks = [];
     for (const entry of sitemapResult.urls.slice(0, maxChecks)) {
       if (!entry.loc) continue;
-      const r = await fetchFollowingRedirects(entry.loc, { timeoutMs, readBody: false });
+      const r = await fetchFollowingRedirects(entry.loc, { timeoutMs, readBody: false, allowPrivateNetwork });
       sitemapResult.statusChecks.push({ loc: entry.loc, status: r.status, finalUrl: r.finalUrl, redirected: (r.redirectChain || []).length > 0, error: r.error });
       if (delayMs > 0) await sleep(delayMs);
     }
   }
 
-  const report = assembleReport({ command: 'sitemap', target, options: { maxSitemaps, maxDepth }, startedAt, sitemapResult });
+  const report = assembleReport({ command: 'sitemap', target, options: { maxSitemaps, maxDepth, allowPrivateNetwork }, startedAt, sitemapResult });
   await emit(report, flags, () => printSitemapSummary(sitemapResult));
 }
 
 async function cmdRobots(target, flags) {
   const startedAt = new Date().toISOString();
   const timeoutMs = num(flags, 'timeout', 10000);
-  const { text, source, fetchError } = await readLocalOrFetch(target, timeoutMs);
+  const allowPrivateNetwork = !!flags['allow-private-network'];
+  const { text, source, fetchError } = await readLocalOrFetch(target, timeoutMs, allowPrivateNetwork);
   const parsed = parseRobotsTxt(text || '');
   const importantPaths = flags.important ? String(flags.important).split(',').map((s) => s.trim()).filter(Boolean) : [];
   const userAgent = typeof flags['user-agent'] === 'string' ? flags['user-agent'] : '*';
   const conflicts = importantPaths.length ? checkImportantPathConflicts(parsed, importantPaths, userAgent) : [];
 
   const robotsResult = { source, found: !fetchError, ...parsed, importantPathConflicts: conflicts, note: ROBOTS_NOT_SECURITY_NOTE, fetchError };
-  const report = assembleReport({ command: 'robots', target, options: {}, startedAt, robotsResult });
+  const report = assembleReport({ command: 'robots', target, options: { allowPrivateNetwork }, startedAt, robotsResult });
   await emit(report, flags, () => printRobotsSummary(robotsResult));
 }
 
@@ -336,17 +341,18 @@ async function cmdAudit(url, flags) {
     timeoutMs: num(flags, 'timeout', 10000),
     includeExternal: !!flags['include-external'],
     respectRobots: !flags['no-robots'],
+    allowPrivateNetwork: !!flags['allow-private-network'],
   };
   const crawlResult = await crawl(url, options);
 
   const origin = new URL(url).origin;
-  const robotsInfo = await fetchRobotsForOrigin(origin, { timeoutMs: options.timeoutMs });
+  const robotsInfo = await fetchRobotsForOrigin(origin, { timeoutMs: options.timeoutMs, allowPrivateNetwork: options.allowPrivateNetwork });
   const robotsResult = { source: robotsInfo.robotsUrl, found: robotsInfo.found, ...robotsInfo.parsed, note: ROBOTS_NOT_SECURITY_NOTE, fetchError: robotsInfo.fetchError || null };
 
   const sitemapUrl = new URL('/sitemap.xml', origin).toString();
   const maxSitemaps = num(flags, 'max-sitemaps', 50);
   const maxSitemapDepth = num(flags, 'max-sitemap-depth', 5);
-  const tree = await resolveSitemapTree(sitemapUrl, { timeoutMs: options.timeoutMs, maxSitemaps, maxDepth: maxSitemapDepth });
+  const tree = await resolveSitemapTree(sitemapUrl, { timeoutMs: options.timeoutMs, maxSitemaps, maxDepth: maxSitemapDepth, allowPrivateNetwork: options.allowPrivateNetwork });
   const rootNode = tree.sitemapsProcessed[0];
   let sitemapResult;
   if (!rootNode || rootNode.type === 'error') {
@@ -391,13 +397,18 @@ function printHelp() {
 
 Usage:
   node cli.js crawl <url>    [--max-pages=50] [--delay=250] [--concurrency=2]
-                             [--timeout=10000] [--include-external] [--no-robots] [--json[=path]]
-  node cli.js page <url>     [--timeout=10000] [--json[=path]]
+                             [--timeout=10000] [--include-external] [--no-robots]
+                             [--allow-private-network] [--json[=path]]
+  node cli.js page <url>     [--timeout=10000] [--allow-private-network] [--json[=path]]
   node cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
-                             [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse] [--json[=path]]
-  node cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot] [--json[=path]]
-  node cli.js links <url>    [--max-pages=50] [--json[=path]]   (crawl focused on the link graph)
-  node cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5] [--json[=path]]
+                             [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse]
+                             [--allow-private-network] [--json[=path]]
+  node cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot]
+                             [--allow-private-network] [--json[=path]]
+  node cli.js links <url>    [--max-pages=50] [--allow-private-network] [--json[=path]]
+                             (crawl focused on the link graph)
+  node cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5]
+                             [--allow-private-network] [--json[=path]]
                              (crawl + sitemap + robots + link graph)
   node cli.js project [path] [--json[=path]]
 
@@ -405,6 +416,14 @@ A sitemap that is a <sitemapindex> is recursed into by default (bounded by
 --max-sitemaps/--max-sitemap-depth) so validation and orphan detection see
 every real page URL, not just the list of child sitemap filenames. Pass
 --no-recurse to see only the root document.
+
+By default, this tool refuses to fetch private/internal network addresses
+(RFC1918, link-local/cloud-metadata 169.254.0.0/16, and their IPv6
+equivalents) — a safety boundary, not an SEO feature. localhost and
+127.0.0.1 (and ::1) remain allowed, since auditing a local dev server is a
+documented use case. Pass --allow-private-network to deliberately audit a
+target on your own internal network; see docs/tooling.md for exactly what
+this does and does not protect against.
 
 --json alone prints JSON to stdout instead of the human summary.
 --json=path.json writes the JSON report to that file.

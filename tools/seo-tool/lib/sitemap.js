@@ -205,6 +205,7 @@ export async function resolveSitemapTree(startUrl, options = {}) {
     maxDepth = DEFAULT_MAX_SITEMAP_DEPTH,
     sameOriginOnly = true,
     seedText = null,
+    allowPrivateNetwork = false,
   } = options;
 
   const visited = new Set();
@@ -257,7 +258,7 @@ export async function resolveSitemapTree(startUrl, options = {}) {
     if (presetText !== undefined && presetText !== null) {
       body = presetText;
     } else {
-      const fetchResult = await fetchFn(sitemapUrl, { timeoutMs });
+      const fetchResult = await fetchFn(sitemapUrl, { timeoutMs, allowPrivateNetwork });
       if (fetchResult.error || !fetchResult.status || fetchResult.status >= 400) {
         sitemapsProcessed.push({
           url: sitemapUrl,

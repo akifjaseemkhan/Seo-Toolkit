@@ -314,3 +314,40 @@ test('CLI links: dispatches to the same crawl machinery with a link-graph-focuse
     server.close();
   }
 });
+
+// ---------- --allow-private-network (SSRF hardening, end-to-end through the real CLI) ----------
+
+test('CLI page against a private-network target is blocked by default, with a clear error and exit 1', async () => {
+  const { stdout, code } = await runCli(['page', 'http://169.254.169.254/latest/meta-data/']);
+  assert.equal(code, 1);
+  assert.match(stdout, /ERROR:/);
+  assert.match(stdout, /private|internal network/i);
+});
+
+test('CLI page --json against a private-network target reports the blocked_private_network error type in the JSON report, not a fetched body', async () => {
+  const { stdout, code } = await runCli(['page', 'http://192.168.1.1/admin', '--json']);
+  assert.equal(code, 1);
+  const report = JSON.parse(stdout);
+  assert.equal(report.pages[0].error.type, 'blocked_private_network');
+  assert.equal(report.pages[0].status, null, 'a blocked request must never carry a real response status');
+});
+
+test('CLI page --allow-private-network explicitly lifts the block (the request is actually attempted, not synchronously refused)', async () => {
+  const { stdout, code } = await runCli(['page', 'http://169.254.169.254/latest/meta-data/', '--allow-private-network', '--json']);
+  assert.equal(code, 1, 'nothing real listens at this address in the test environment, so it still ultimately fails');
+  const report = JSON.parse(stdout);
+  assert.notEqual(report.pages[0].error.type, 'blocked_private_network', 'the failure must now come from a real network attempt, not our guard');
+});
+
+test('CLI still works normally against "localhost" (not just 127.0.0.1), confirming the default protection never regresses the documented local-dev-server use case', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
+  try {
+    const { stdout, code } = await runCli(['page', `${localhostUrl}/`]);
+    assert.equal(code, 0);
+    assert.match(stdout, /Status: 200/);
+    assert.match(stdout, /Title: CLI Fixture Home/);
+  } finally {
+    server.close();
+  }
+});

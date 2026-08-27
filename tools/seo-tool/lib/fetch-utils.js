@@ -5,6 +5,15 @@
 // Read-only guarantee: this module only ever issues GET/HEAD requests. It
 // never sends a body and never calls a method that would mutate anything on
 // the target server.
+//
+// Safety guarantee: every actual network request funnels through fetchOnce
+// (fetchFollowingRedirects calls it once per hop, and it has no other
+// caller anywhere in this codebase), so the private-network check there
+// applies to the initial URL AND every redirect hop, with no separate path
+// that could bypass it. A blocked target is refused before fetch() is ever
+// called — no request reaches it, so no response body from it can exist.
+
+import { isPrivateNetworkTarget } from './url-utils.js';
 
 export const DEFAULT_USER_AGENT =
   'seo-tool/1.0 (+local SEO inspection toolkit; read-only; part of an agent-agnostic SEO engineering skill)';
@@ -26,7 +35,24 @@ function classifyFetchError(err) {
 
 /** Issue a single request with no redirect-following and a timeout. */
 export async function fetchOnce(url, options = {}) {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, userAgent = DEFAULT_USER_AGENT, method = 'GET' } = options;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, userAgent = DEFAULT_USER_AGENT, method = 'GET', allowPrivateNetwork = false } = options;
+
+  if (!allowPrivateNetwork && isPrivateNetworkTarget(url)) {
+    let hostname = url;
+    try {
+      hostname = new URL(url).hostname;
+    } catch {
+      /* keep the raw url in the message if it somehow doesn't parse here */
+    }
+    return {
+      ok: false,
+      error: {
+        type: 'blocked_private_network',
+        message: `Refusing to fetch a private/internal network address (${hostname}) — pass --allow-private-network to override for a deliberate internal-network audit.`,
+      },
+    };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -94,6 +120,7 @@ export async function fetchFollowingRedirects(url, options = {}) {
     method = 'GET',
     maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
     readBody = true,
+    allowPrivateNetwork = false,
   } = options;
 
   const redirectChain = [];
@@ -122,7 +149,7 @@ export async function fetchFollowingRedirects(url, options = {}) {
       };
     }
 
-    const result = await fetchOnce(current, { timeoutMs, userAgent, method });
+    const result = await fetchOnce(current, { timeoutMs, userAgent, method, allowPrivateNetwork });
     if (!result.ok) {
       return { requestedUrl: url, finalUrl: current, status: null, redirectChain, error: result.error };
     }

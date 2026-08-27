@@ -46,7 +46,19 @@ Don't use it when:
 
 Every command in `tools/seo-tool` is read-only against everything it inspects: it only ever issues `GET` HTTP requests (never a mutating method) and only ever reads local files. It never edits source files, never writes `robots.txt`/`sitemap.xml`/`package.json`, never modifies routes or configuration, and never touches Git state. The only thing it ever writes is its own JSON report, and only when you explicitly pass `--json=path`. This mirrors the audit/implement separation in `SKILL.md` — the toolkit only ever performs the "audit" half.
 
-It is also conservative by default: same-origin only (external links are recorded but not crawled unless `--include-external` is passed), a configurable page cap (`--max-pages`, default 50), a delay between request batches (`--delay`, default 250ms), bounded concurrency (`--concurrency`, default 2), a request timeout (`--timeout`), and it respects `robots.txt` by default (`--no-robots` to override, e.g. for auditing your own project's disallowed paths).
+It is also conservative by default: same-origin only (external links are recorded but not crawled unless `--include-external` is passed), a configurable page cap (`--max-pages`, default 50), a delay between request batches (`--delay`, default 250ms), bounded concurrency (`--concurrency`, default 2), a request timeout (`--timeout`), it respects `robots.txt` by default (`--no-robots` to override, e.g. for auditing your own project's disallowed paths), and it refuses private/internal network targets by default (`--allow-private-network` to override — see below).
+
+### Private-network protection (a safety boundary, not an SEO feature)
+
+By default, no command in this toolkit will fetch a target whose host is a private or internal network address: RFC1918 IPv4 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local IPv4 including the cloud metadata address `169.254.169.254` (`169.254.0.0/16`), the unspecified address `0.0.0.0`, and the IPv6 equivalents (link-local `fe80::/10`, unique-local `fc00::/7`, and the unspecified `::`) — including IPv4-mapped IPv6 forms of any of the above (e.g. `::ffff:169.254.169.254`). This applies to **every** URL this tool fetches, including **every redirect hop**, not just the URL you typed — a public URL that redirects to a private address is blocked at the redirect, before that request is ever made.
+
+**Loopback stays allowed by design**: `localhost`, `127.0.0.1` (the whole `127.0.0.0/8` range), and IPv6 `::1` are never blocked, because a loopback address can only ever reach back to the same machine running the tool — auditing your own local dev server is a documented, supported use case (`docs/installation.md`), not a risk this check exists to prevent.
+
+A blocked target produces the same kind of result as any other fetch failure — `{ error: { type: 'blocked_private_network', message: '...' } }` — through the existing error/result model (`page.error`, `crawlResult.errors`, a command's `fetchError`), not a special case. No request is made to the blocked address, so no response from it can ever appear in the tool's output.
+
+**`--allow-private-network`** deliberately lifts this restriction, for a legitimate case this tool cannot tell apart from a risk automatically: auditing a real site on your own internal network (an internal staging server, an on-prem deployment). It is off by default and must be passed explicitly and knowingly — it is not something to reach for casually, and it applies to the whole command's run (initial URL and every redirect hop), not a narrower scope.
+
+**Known, deliberate limitation**: this check only recognizes *literal* IP addresses in the URL's host — it does not perform DNS resolution. A hostname that *resolves* to a private address (an internal DNS entry, or a domain deliberately set up to do this) is not caught. Adding that would require resolving every hostname before every request (and re-resolving on every redirect hop, since the resolved address can change between checks — a much larger, riskier scope than this check) — see `lib/url-utils.js`'s `isPrivateNetworkTarget` for the exact, literal policy this implements.
 
 ## Commands
 
@@ -54,13 +66,17 @@ Run from the repository (no global install, no `npm install` needed — zero dep
 
 ```bash
 node tools/seo-tool/cli.js crawl <url>    [--max-pages=50] [--delay=250] [--concurrency=2]
-                                          [--timeout=10000] [--include-external] [--no-robots] [--json[=path]]
-node tools/seo-tool/cli.js page <url>     [--timeout=10000] [--json[=path]]
+                                          [--timeout=10000] [--include-external] [--no-robots]
+                                          [--allow-private-network] [--json[=path]]
+node tools/seo-tool/cli.js page <url>     [--timeout=10000] [--allow-private-network] [--json[=path]]
 node tools/seo-tool/cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
-                                               [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse] [--json[=path]]
-node tools/seo-tool/cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot] [--json[=path]]
-node tools/seo-tool/cli.js links <url>    [--max-pages=50] [--json[=path]]
-node tools/seo-tool/cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5] [--json[=path]]
+                                               [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse]
+                                               [--allow-private-network] [--json[=path]]
+node tools/seo-tool/cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot]
+                                               [--allow-private-network] [--json[=path]]
+node tools/seo-tool/cli.js links <url>    [--max-pages=50] [--allow-private-network] [--json[=path]]
+node tools/seo-tool/cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5]
+                                          [--allow-private-network] [--json[=path]]
 node tools/seo-tool/cli.js project [path] [--json[=path]]
 ```
 
@@ -106,7 +122,7 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
     "target": "https://example.com",
     "startedAt": "2026-08-25T12:00:00.000Z",
     "finishedAt": "2026-08-25T12:00:03.500Z",
-    "options": { "maxPages": 50, "delayMs": 250, "concurrency": 2, "timeoutMs": 10000, "includeExternal": false, "respectRobots": true }
+    "options": { "maxPages": 50, "delayMs": 250, "concurrency": 2, "timeoutMs": 10000, "includeExternal": false, "respectRobots": true, "allowPrivateNetwork": false }
   },
   "pages": [                          // present for page/crawl/links/audit
     {
@@ -160,6 +176,7 @@ Keep this schema in sync with `tools/seo-tool/lib/report.js` when either changes
 - A full crawl against a local HTTP fixture server (redirects, 404s, robots blocking, external-link handling), and project inspection against a fixture directory.
 - The CLI entry point itself (`cli.js`) as a real subprocess: command dispatch, argument parsing, exit codes, and both output modes (`--json`, `--json=path`).
 - `lib/fetch-utils.js` directly: timeouts, redirect chains, redirect loops, capped body reads, and network-error classification.
+- Private-network blocking (`lib/url-utils.js`'s `isPrivateNetworkTarget` and its use in `fetch-utils.js`): IPv4/IPv6 range classification including boundary cases, and — against real local HTTP fixture servers, not mocks — that a redirect to a private or cloud-metadata address is blocked *before* it is fetched, at whichever hop first becomes private, with `--allow-private-network`/`allowPrivateNetwork` verified as a working, explicit opt-out.
 - `lib/report.js`'s assembled JSON report shape against the schema documented above.
 
 Run it after any change to `tools/seo-tool`. GitHub Actions CI (`.github/workflows/ci.yml`) runs the same command on every push and pull request.

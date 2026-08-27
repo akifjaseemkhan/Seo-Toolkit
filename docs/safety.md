@@ -51,3 +51,7 @@ Per [[../rules/implementation-safety]]: a clear description of the change and it
 ## Escalation, not silent failure
 
 When something is out of safe reach — an architecture change would genuinely help, a fact can't be verified, external configuration is required — the correct response per every rule above is to **report it clearly**, not to implement a workaround, not to guess, and not to silently skip it without mention. See `templates/change-report.md`'s "Not Implemented" and "External Configuration Required" sections and "Requires Explicit Decision" in `templates/seo-audit-report.md`.
+
+## A separate concern: the tool's own network safety
+
+Everything above is about the *risk of a change this skill makes to a site*. It's a different axis from the *risk of the tool itself making a dangerous network request*: `tools/seo-tool` refuses by default to fetch private/internal network addresses (RFC1918, link-local/cloud-metadata, and their IPv6 equivalents), on every URL it fetches including every redirect hop, so that pointing it at an untrusted or attacker-influenced URL can't be turned into a probe of the machine's own internal network. See [`docs/tooling.md`](tooling.md#private-network-protection-a-safety-boundary-not-an-seo-feature) for what's blocked and why — that protection is a property of the tool's fetch layer, not part of the Category A/B/C/D content-change model above.
