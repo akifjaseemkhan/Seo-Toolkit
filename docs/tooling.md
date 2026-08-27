@@ -56,10 +56,11 @@ Run from the repository (no global install, no `npm install` needed — zero dep
 node tools/seo-tool/cli.js crawl <url>    [--max-pages=50] [--delay=250] [--concurrency=2]
                                           [--timeout=10000] [--include-external] [--no-robots] [--json[=path]]
 node tools/seo-tool/cli.js page <url>     [--timeout=10000] [--json[=path]]
-node tools/seo-tool/cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20] [--json[=path]]
+node tools/seo-tool/cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
+                                               [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse] [--json[=path]]
 node tools/seo-tool/cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot] [--json[=path]]
 node tools/seo-tool/cli.js links <url>    [--max-pages=50] [--json[=path]]
-node tools/seo-tool/cli.js audit <url>    [--max-pages=50] [--json[=path]]
+node tools/seo-tool/cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5] [--json[=path]]
 node tools/seo-tool/cli.js project [path] [--json[=path]]
 ```
 
@@ -71,7 +72,7 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 
 - **`page`** — one URL's status, redirect chain, content type, title, meta description, canonical, viewport, `lang`, robots meta + `X-Robots-Tag` directives, an indexability signal (see below), H1/H2 counts and text, Open Graph fields, Twitter card fields, JSON-LD blocks (parsed, with parse errors captured rather than thrown), internal/external links (with anchor text and `nofollow`), and images (`src`, `alt` presence vs. empty alt).
 - **`crawl`** — the same facts for every same-origin page reached by breadth-first traversal from the start URL, plus each page's crawl depth and which pages linked to it (within this crawl).
-- **`sitemap`** — parses `<urlset>` or `<sitemapindex>`, flags missing/malformed `loc` values, exact and trailing-slash-variant duplicates, and paths that heuristically look non-public (admin/account/cart-like segments) — a heuristic flag for a human to verify, not a claim of certainty. `--check-status` optionally spot-checks the first N listed URLs' real HTTP status.
+- **`sitemap`** — parses `<urlset>` or `<sitemapindex>`. A `<sitemapindex>` is recursed into by default (bounded by `--max-sitemaps`, default 50, and `--max-sitemap-depth`, default 5) so `entryCount`/`urls`/`issues` always reflect the full aggregated set of real page URLs across every child sitemap, never just the list of child filenames — pass `--no-recurse` to see only the root document. Recursion is same-origin, deduplicates repeated/cyclical child sitemap references (each fetched at most once), and records every file it touched in `sitemapsProcessed` plus anything it declined to follow (cross-origin, duplicate, or bound-exceeded) in `skipped`; a `truncated: true` flag means the bounds were hit before the whole tree was covered. Validation flags missing/malformed `loc` values, exact and trailing-slash-variant duplicates, and paths that heuristically look non-public (admin/account/cart-like segments) — a heuristic flag for a human to verify, not a claim of certainty. `--check-status` optionally spot-checks the first N aggregated URLs' real HTTP status.
 - **`robots`** — parses groups/rules/`Sitemap:` declarations, and (with `--important`) flags whether specific paths are blocked for a given user-agent, using longest-match-wins evaluation with `*` wildcards and `$` end-anchors.
 - **`links`** — the same crawl as `crawl`, with the human summary focused on the link graph.
 - **`audit`** — runs `crawl` + fetches `robots.txt` + fetches `/sitemap.xml`, then cross-references the sitemap's URL list against the crawl's discovered internal links to find real orphan candidates (see the note below on why `crawl` alone can't do this).
@@ -81,6 +82,8 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 
 A crawl that starts from one page and only follows discovered links can, by construction, never find a page that truly has zero incoming links — if the crawler reached it, something linked to it. Real orphan detection needs an independent list of URLs that *should* exist to cross-reference against what the crawl actually found linked — that's what `audit` does by comparing the sitemap's URLs against the crawl's discovered link targets. `crawl`/`links` alone will typically report zero orphan candidates, which is expected and documented, not a bug — prefer `audit` when orphan detection specifically matters.
 
+This cross-reference is sitemap-index-aware: `audit` resolves the full sitemap tree (see the `sitemap` command above) before comparing, so a site whose `/sitemap.xml` is actually a `<sitemapindex>` still gets real orphan detection instead of silently comparing against an empty list.
+
 ## Known limitations (read before treating an absence as proof)
 
 - **HTML/sitemap parsing is regex-based, not a full parser or DOM.** It handles realistic, reasonably well-formed markup (any attribute order, single/double-quoted or unquoted values, mixed-case tags) but is not a substitute for a browser. Unusual or deeply malformed markup can produce a false negative (a tag present but not detected). Treat a missing result as "not found by this pass," and fall back to manual/browser inspection for anything surprising before concluding a tag truly doesn't exist.
@@ -88,6 +91,7 @@ A crawl that starts from one page and only follows discovered links can, by cons
 - **`project`'s metadata-signal scan is a plain substring match**, not semantic code analysis. A signal string found in a comment, a string literal, or unrelated context will still be reported as a "hit." It reports file counts and sample paths so the reasoning layer can verify each hit, not as a verified-implementation claim.
 - **Indexability is a signal, not a verdict.** `page`/`crawl`'s `indexable` field only reflects status code + robots meta/`X-Robots-Tag` + canonical-target agreement for that one response. It does not check `robots.txt` blocking (a separate, crawl-level concern already applied during `crawl`) or quality-based exclusion, which no local tool can determine. Feed it into `checklists/indexing-checklist.md`'s full diagnostic order.
 - **No external/authority data.** Nothing here touches Search Console, rank trackers, backlink indexes, or analytics — see the Local vs. live vs. external table above.
+- **Sitemap-index recursion is sequential, not concurrent.** Child sitemaps are fetched one at a time, so a pathologically large or slow index can take up to `--max-sitemaps` × `--timeout` in the worst case (roughly 8 minutes at the defaults of 50 × 10s, if every single child timed out). This is bounded, not unbounded — it will always stop — but it can be slow on an unusually large index. Lower `--max-sitemaps`/`--timeout` for a quicker, partial look, or raise them if a large site's index genuinely needs the headroom.
 
 ## JSON output schema
 
@@ -128,7 +132,13 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
     }
   ],
   "crawlSummary": { "startUrl": "...", "pagesFetched": 12, "truncatedByMaxPages": false, "robots": { "checked": true, "robotsUrl": "..." } },
-  "sitemap": { "source": "...", "type": "urlset", "entryCount": 40, "urls": [ { "loc": "...", "lastmod": "...", "changefreq": null, "priority": null } ], "issues": [ { "type": "duplicate_exact", "loc": "...", "index": 3 } ], "statusChecks": [ { "loc": "...", "status": 200, "finalUrl": "...", "redirected": false, "error": null } ] },
+  "sitemap": { "source": "...", "type": "urlset",              // urlset | sitemapindex | invalid | not_found — reflects the ROOT document; urls/entryCount/issues are always the full aggregated tree
+    "entryCount": 40, "urls": [ { "loc": "...", "lastmod": "...", "changefreq": null, "priority": null } ],
+    "issues": [ { "type": "duplicate_exact", "loc": "...", "index": 3 } ],
+    "sitemapsProcessed": [ { "url": "...", "depth": 0, "type": "urlset", "urlCount": 40, "error": null }, { "url": "...", "depth": 0, "type": "sitemapindex", "childCount": 3, "error": null } ], // urlCount = real page URLs in that file; childCount = child <sitemap> references in that index — never the same field, since they're different units
+    "skipped": [ { "url": "...", "reason": "cross-origin child sitemap skipped (same-origin restriction)" } ],
+    "truncated": false,
+    "statusChecks": [ { "loc": "...", "status": 200, "finalUrl": "...", "redirected": false, "error": null } ] },
   "robots": { "source": "...", "found": true, "groups": [ { "agents": ["*"], "rules": [ { "type": "disallow", "path": "/admin" } ] } ], "sitemaps": ["..."], "unknownDirectives": [], "importantPathConflicts": [], "note": "robots.txt is a crawl-behavior hint, not access control ..." },
   "linkGraph": { "orphanCandidates": ["..."], "orphanDetectionUsedKnownUrls": true, "crawlDepthOutliers": [ { "url": "...", "depth": 5 } ], "brokenInternalLinks": [ { "from": "...", "to": "...", "status": 404 } ], "unverifiedInternalLinks": [ { "from": "...", "to": "..." } ], "note": "..." },
   "project": { "rootDir": "...", "packageJson": { "dependencies": ["next", "react"], "scripts": {} }, "packageManager": "npm", "frameworkConfigFiles": ["next.config.js"], "directoryConventions": { "hasAppRouterDir": true }, "seoRelatedFilesFound": ["public/robots.txt"], "metadataImplementationSignals": { "generateMetadata": { "fileCount": 4, "samplePaths": ["..."] } }, "scan": { "filesWalked": 812, "truncated": false } },

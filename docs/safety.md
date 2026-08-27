@@ -31,6 +31,19 @@ Nearly every rule above ultimately routes back to one question from [[../rules/z
 
 This single test is what lets the skill move fast on the many low-risk fixes that make up most real SEO work, while still stopping hard before the small number of changes that could cause real damage.
 
+## The authoritative risk model: Category A/B/C/D
+
+The reversibility test above is the *principle*; [[../rules/implementation-safety]] and `SKILL.md`'s "Change risk categories" turn it into the actual, checkable procedure every implementation is sorted through before it happens. This is one model, not a second one layered on top — the categories are the reversibility test made concrete and given a fixed default behavior for each answer:
+
+| Category | What it means | Default behavior |
+|---|---|---|
+| **A — Safe** | Additive, easily reversible, doesn't touch protected functionality (a meta tag, an alt attribute, real structured data, a sitemap entry) | Implement directly once planned, per the eight-phase procedure |
+| **B — Moderate** | Template-level or site-wide-component changes; still reversible but with real blast radius | Implement the smallest safe version; explain clearly in the report; consider a scoped pilot first |
+| **C — High risk** | Hard to reverse, large blast radius, or adjacent to protected functionality (routing, rendering strategy, redirects at scale, framework/build config) | **Stop. Explain the risk. Get explicit approval for that specific change before implementing.** |
+| **D — External** | Outside the codebase entirely (DNS, hosting, CDN, Search Console, Google Business Profile) | Never attempt a code workaround; report precisely what to change and where |
+
+Authentication, authorization, payment logic, database queries, API behavior, and WebSocket/realtime logic are not Category C awaiting approval — they are **out of scope for this skill entirely**, per [[../rules/zero-breakage]]. See [[../rules/implementation-safety]] for the full table with worked examples per category.
+
 ## What "explicit confirmation" actually requires
 
 Per [[../rules/implementation-safety]]: a clear description of the change and its risk, presented to the user in chat, with an actual response from them before proceeding — not an assumption that a prior general go-ahead ("yes, fix the SEO issues") covers a specific high-risk item discovered along the way. See the Instruction source boundary and Action categories guidance the assistant operates under more broadly — this skill's safety rules are additive to that, not a replacement for it.

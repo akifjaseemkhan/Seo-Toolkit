@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { fetchFollowingRedirects, DEFAULT_TIMEOUT_MS } from './lib/fetch-utils.js';
@@ -16,11 +17,11 @@ import { extractSeoFacts } from './lib/html-extract.js';
 import { crawl, fetchRobotsForOrigin } from './lib/crawler.js';
 import { buildLinkGraph } from './lib/link-graph.js';
 import { parseRobotsTxt, checkImportantPathConflicts, ROBOTS_NOT_SECURITY_NOTE } from './lib/robots.js';
-import { parseSitemap, validateSitemapEntries } from './lib/sitemap.js';
+import { parseSitemap, resolveSitemapTree } from './lib/sitemap.js';
 import { inspectProject } from './lib/project-inspect.js';
 import { assembleReport } from './lib/report.js';
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const positional = [];
   const flags = {};
   for (const arg of argv) {
@@ -35,7 +36,7 @@ function parseArgs(argv) {
   return { positional, flags };
 }
 
-function num(flags, key, def) {
+export function num(flags, key, def) {
   if (flags[key] === undefined) return def;
   const n = Number(flags[key]);
   return Number.isFinite(n) ? n : def;
@@ -128,10 +129,22 @@ function printSitemapSummary(sitemapResult) {
   }
   console.log(`  Type: ${sitemapResult.type}`);
   if (sitemapResult.type === 'invalid') {
+    // An invalid root has no children to recurse into, so this is always
+    // exactly one processed node — nothing more to show than the error.
     console.log(`  Error: ${sitemapResult.error}`);
     return;
   }
-  console.log(`  Entries: ${sitemapResult.entryCount}`);
+  console.log(`  Entries (aggregated across all sitemap files found): ${sitemapResult.entryCount}`);
+  if (sitemapResult.sitemapsProcessed && sitemapResult.sitemapsProcessed.length > 1) {
+    const failed = sitemapResult.sitemapsProcessed.filter((s) => s.type === 'error' || s.type === 'invalid');
+    console.log(`  Sitemap files processed: ${sitemapResult.sitemapsProcessed.length}${failed.length ? ` (${failed.length} failed/malformed — see --json)` : ''}`);
+  }
+  if (sitemapResult.skipped && sitemapResult.skipped.length) {
+    console.log(`  Skipped: ${sitemapResult.skipped.length} (duplicate, cross-origin, or bound exceeded — see --json for detail)`);
+  }
+  if (sitemapResult.truncated) {
+    console.log('  WARNING: sitemap tree traversal was truncated by --max-sitemaps/--max-sitemap-depth — results may be incomplete. Re-run with higher limits if this site has an unusually large sitemap index.');
+  }
   if (sitemapResult.issues && sitemapResult.issues.length) {
     console.log(`  Issues found: ${sitemapResult.issues.length}`);
     for (const issue of sitemapResult.issues.slice(0, 10)) {
@@ -237,30 +250,66 @@ async function cmdCrawl(url, flags, commandName = 'crawl') {
 async function cmdSitemap(target, flags) {
   const startedAt = new Date().toISOString();
   const timeoutMs = num(flags, 'timeout', 10000);
+  const maxSitemaps = num(flags, 'max-sitemaps', 50);
+  // --no-recurse means "show me the root document only" — implemented as
+  // maxDepth 0 through the same resolver, so a not-recursed sitemapindex
+  // still honestly reports its children as skipped rather than just
+  // vanishing, instead of maintaining a second, duplicate parse path.
+  const maxDepth = flags['no-recurse'] ? 0 : num(flags, 'max-sitemap-depth', 5);
   const { text, source, fetchError } = await readLocalOrFetch(target, timeoutMs);
 
-  let parsed = { type: 'invalid', error: fetchError || 'no content available' };
-  let issues = [];
-  if (text) {
-    parsed = parseSitemap(text);
-    if (parsed.type === 'urlset') issues = validateSitemapEntries(parsed.urls);
+  const isUrl = /^https?:\/\//i.test(target);
+  let sitemapResult;
+
+  if (!text) {
+    sitemapResult = {
+      source,
+      type: 'invalid',
+      error: fetchError || 'no content available',
+      urls: [],
+      entryCount: 0,
+      issues: [],
+      sitemapsProcessed: [],
+      skipped: [],
+      truncated: false,
+      fetchError,
+    };
+  } else {
+    const tree = await resolveSitemapTree(isUrl ? target : source, {
+      timeoutMs,
+      maxSitemaps,
+      maxDepth,
+      seedText: text,
+    });
+    const rootNode = tree.sitemapsProcessed[0];
+    const rootType = rootNode ? rootNode.type : 'error';
+    sitemapResult = {
+      source,
+      type: rootType === 'error' ? 'invalid' : rootType,
+      error: rootType === 'error' || rootType === 'invalid' ? rootNode.error : undefined,
+      urls: tree.urls,
+      entryCount: tree.entryCount,
+      issues: tree.issues,
+      sitemapsProcessed: tree.sitemapsProcessed,
+      skipped: tree.skipped,
+      truncated: tree.truncated,
+      fetchError: null,
+    };
   }
 
-  let statusChecks;
-  if (flags['check-status'] && parsed.type === 'urlset') {
+  if (flags['check-status'] && sitemapResult.urls.length) {
     const maxChecks = num(flags, 'max-checks', 20);
     const delayMs = num(flags, 'delay', 250);
-    statusChecks = [];
-    for (const entry of parsed.urls.slice(0, maxChecks)) {
+    sitemapResult.statusChecks = [];
+    for (const entry of sitemapResult.urls.slice(0, maxChecks)) {
       if (!entry.loc) continue;
       const r = await fetchFollowingRedirects(entry.loc, { timeoutMs, readBody: false });
-      statusChecks.push({ loc: entry.loc, status: r.status, finalUrl: r.finalUrl, redirected: (r.redirectChain || []).length > 0, error: r.error });
+      sitemapResult.statusChecks.push({ loc: entry.loc, status: r.status, finalUrl: r.finalUrl, redirected: (r.redirectChain || []).length > 0, error: r.error });
       if (delayMs > 0) await sleep(delayMs);
     }
   }
 
-  const sitemapResult = { source, ...parsed, issues, statusChecks, fetchError };
-  const report = assembleReport({ command: 'sitemap', target, options: {}, startedAt, sitemapResult });
+  const report = assembleReport({ command: 'sitemap', target, options: { maxSitemaps, maxDepth }, startedAt, sitemapResult });
   await emit(report, flags, () => printSitemapSummary(sitemapResult));
 }
 
@@ -295,20 +344,33 @@ async function cmdAudit(url, flags) {
   const robotsResult = { source: robotsInfo.robotsUrl, found: robotsInfo.found, ...robotsInfo.parsed, note: ROBOTS_NOT_SECURITY_NOTE, fetchError: robotsInfo.fetchError || null };
 
   const sitemapUrl = new URL('/sitemap.xml', origin).toString();
-  const sitemapFetch = await fetchFollowingRedirects(sitemapUrl, { timeoutMs: options.timeoutMs });
+  const maxSitemaps = num(flags, 'max-sitemaps', 50);
+  const maxSitemapDepth = num(flags, 'max-sitemap-depth', 5);
+  const tree = await resolveSitemapTree(sitemapUrl, { timeoutMs: options.timeoutMs, maxSitemaps, maxDepth: maxSitemapDepth });
+  const rootNode = tree.sitemapsProcessed[0];
   let sitemapResult;
-  if (!sitemapFetch.error && sitemapFetch.status === 200 && sitemapFetch.body) {
-    const parsed = parseSitemap(sitemapFetch.body);
-    const issues = parsed.type === 'urlset' ? validateSitemapEntries(parsed.urls) : [];
-    sitemapResult = { source: sitemapUrl, ...parsed, issues };
+  if (!rootNode || rootNode.type === 'error') {
+    sitemapResult = { source: sitemapUrl, type: 'not_found', fetchError: rootNode ? rootNode.error : 'sitemap.xml not reachable', urls: [], entryCount: 0, issues: [], sitemapsProcessed: tree.sitemapsProcessed, skipped: tree.skipped, truncated: tree.truncated };
   } else {
-    sitemapResult = { source: sitemapUrl, type: 'not_found', fetchError: sitemapFetch.error ? sitemapFetch.error.message : `status ${sitemapFetch.status}` };
+    sitemapResult = {
+      source: sitemapUrl,
+      type: rootNode.type, // 'urlset' | 'sitemapindex' | 'invalid'
+      urls: tree.urls,
+      entryCount: tree.entryCount,
+      issues: tree.issues,
+      sitemapsProcessed: tree.sitemapsProcessed,
+      skipped: tree.skipped,
+      truncated: tree.truncated,
+    };
   }
 
   // Cross-referencing the sitemap's URL list against the crawl's discovered
   // links is what makes orphan detection actually meaningful — see
   // lib/link-graph.js's doc comments on why a crawl alone can't do this.
-  const knownUrls = sitemapResult.type === 'urlset' ? sitemapResult.urls.map((u) => u.loc).filter(Boolean) : [];
+  // This now correctly includes sitemapindex trees (previously only a plain
+  // urlset populated knownUrls — an indexed sitemap silently produced an
+  // empty list and orphan detection degraded with no warning).
+  const knownUrls = (sitemapResult.type === 'urlset' || sitemapResult.type === 'sitemapindex') ? sitemapResult.urls.map((u) => u.loc).filter(Boolean) : [];
   const linkGraph = buildLinkGraph(crawlResult.pages, url, { knownUrls });
 
   const report = assembleReport({ command: 'audit', target: url, options, startedAt, crawlResult, linkGraph, sitemapResult, robotsResult });
@@ -331,11 +393,18 @@ Usage:
   node cli.js crawl <url>    [--max-pages=50] [--delay=250] [--concurrency=2]
                              [--timeout=10000] [--include-external] [--no-robots] [--json[=path]]
   node cli.js page <url>     [--timeout=10000] [--json[=path]]
-  node cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20] [--json[=path]]
+  node cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
+                             [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse] [--json[=path]]
   node cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot] [--json[=path]]
   node cli.js links <url>    [--max-pages=50] [--json[=path]]   (crawl focused on the link graph)
-  node cli.js audit <url>    [--max-pages=50] [--json[=path]]   (crawl + sitemap + robots + link graph)
+  node cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5] [--json[=path]]
+                             (crawl + sitemap + robots + link graph)
   node cli.js project [path] [--json[=path]]
+
+A sitemap that is a <sitemapindex> is recursed into by default (bounded by
+--max-sitemaps/--max-sitemap-depth) so validation and orphan detection see
+every real page URL, not just the list of child sitemap filenames. Pass
+--no-recurse to see only the root document.
 
 --json alone prints JSON to stdout instead of the human summary.
 --json=path.json writes the JSON report to that file.
@@ -344,7 +413,7 @@ This tool is strictly read-only against everything it inspects. See ../../docs/t
 `);
 }
 
-async function main() {
+export async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
   const target = positional[0];
@@ -395,4 +464,11 @@ async function main() {
   }
 }
 
-main();
+// Only auto-run when this file is executed directly (`node cli.js ...`),
+// not when it's imported — this lets tests import parseArgs/num/main
+// without triggering a real run against the test runner's own argv.
+// Standard, transparent ESM "am I the entry point" check: it has zero
+// effect on normal `node cli.js ...` invocation.
+if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}
