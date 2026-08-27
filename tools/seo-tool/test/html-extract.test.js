@@ -6,6 +6,7 @@ import {
   extractMetaDescription,
   extractRobotsMeta,
   extractCanonical,
+  extractHreflang,
   extractViewport,
   extractLangAttribute,
   extractHeadings,
@@ -135,6 +136,131 @@ test('extractCanonical never throws when pageUrl itself is missing/invalid, even
 test('extractCanonical is case-insensitive and whitespace-tolerant on rel="canonical" among other rel values', () => {
   const result = extractCanonical('<link rel="alternate canonical" href="/x">', 'https://example.com/');
   assert.equal(result.canonical, 'https://example.com/x');
+});
+
+// ---------- extractHreflang ----------
+
+test('extractHreflang finds every rel=alternate hreflang declaration and resolves each href to absolute', () => {
+  const html = `
+    <link rel="alternate" hreflang="en-US" href="/en/page">
+    <link rel="alternate" hreflang="fr-FR" href="https://example.com/fr/page">
+  `;
+  const result = extractHreflang(html, 'https://example.com/en/page');
+  assert.equal(result.hreflangCount, 2);
+  assert.deepEqual(result.hreflangTags, [
+    { hreflang: 'en-US', href: 'https://example.com/en/page', rawHref: '/en/page' },
+    { hreflang: 'fr-FR', href: 'https://example.com/fr/page', rawHref: 'https://example.com/fr/page' },
+  ]);
+});
+
+test('extractHreflang resolves relative and root-relative hrefs the same way canonical does', () => {
+  const relative = extractHreflang('<link rel="alternate" hreflang="fr" href="page">', 'https://example.com/shop/index.html');
+  assert.equal(relative.hreflangTags[0].href, 'https://example.com/shop/page');
+
+  const rootRelative = extractHreflang('<link rel="alternate" hreflang="fr" href="/page">', 'https://example.com/shop/deep/page');
+  assert.equal(rootRelative.hreflangTags[0].href, 'https://example.com/page');
+});
+
+test('extractHreflang recognizes hreflang="x-default" as valid, not malformed', () => {
+  const result = extractHreflang('<link rel="alternate" hreflang="x-default" href="/default">', 'https://example.com/');
+  assert.equal(result.hasXDefault, true);
+  assert.deepEqual(result.malformedHreflang, []);
+});
+
+test('extractHreflang reports hasXDefault:false when no x-default declaration exists', () => {
+  const result = extractHreflang('<link rel="alternate" hreflang="en" href="/en">', 'https://example.com/');
+  assert.equal(result.hasXDefault, false);
+});
+
+test('extractHreflang detects a page that references itself in its own hreflang set', () => {
+  const html = `
+    <link rel="alternate" hreflang="en-US" href="/page">
+    <link rel="alternate" hreflang="fr-FR" href="/fr/page">
+  `;
+  const result = extractHreflang(html, 'https://example.com/page');
+  assert.equal(result.selfReferencingHreflang, true, 'the en-US entry resolves to the page\'s own URL');
+});
+
+test('extractHreflang detects when a page does NOT reference itself (a real, common hreflang mistake)', () => {
+  const html = '<link rel="alternate" hreflang="fr-FR" href="/fr/page">';
+  const result = extractHreflang(html, 'https://example.com/page');
+  assert.equal(result.selfReferencingHreflang, false);
+});
+
+test('extractHreflang flags hreflang values repeated with genuinely different targets, but not the same target', () => {
+  const conflicting = extractHreflang(
+    '<link rel="alternate" hreflang="fr" href="/fr-a"><link rel="alternate" hreflang="fr" href="/fr-b">',
+    'https://example.com/'
+  );
+  assert.deepEqual(conflicting.duplicateHreflangValues, ['fr']);
+
+  const harmlessRepeat = extractHreflang(
+    '<link rel="alternate" hreflang="fr" href="/fr"><link rel="alternate" hreflang="fr" href="/fr">',
+    'https://example.com/'
+  );
+  assert.deepEqual(harmlessRepeat.duplicateHreflangValues, [], 'the exact same value+target repeated is redundant, not a conflicting signal');
+});
+
+test('extractHreflang treats an empty hreflang value as malformed', () => {
+  const result = extractHreflang('<link rel="alternate" hreflang="" href="/x">', 'https://example.com/');
+  assert.equal(result.malformedHreflang.length, 1);
+  assert.match(result.malformedHreflang[0].issue, /empty/);
+});
+
+test('extractHreflang flags an underscore separator as malformed (the exact mistake workflows/international-seo.md calls out)', () => {
+  const result = extractHreflang('<link rel="alternate" hreflang="en_US" href="/x">', 'https://example.com/');
+  assert.equal(result.malformedHreflang.length, 1);
+  assert.match(result.malformedHreflang[0].issue, /underscore/);
+  assert.match(result.malformedHreflang[0].issue, /en_US/);
+});
+
+test('extractHreflang flags the "UK instead of GB" mistake (also explicitly called out in workflows/international-seo.md)', () => {
+  const result = extractHreflang('<link rel="alternate" hreflang="en-uk" href="/x">', 'https://example.com/');
+  assert.equal(result.malformedHreflang.length, 1);
+  assert.match(result.malformedHreflang[0].issue, /GB/);
+});
+
+test('extractHreflang does not flag well-formed codes as malformed', () => {
+  const html = `
+    <link rel="alternate" hreflang="en" href="/en">
+    <link rel="alternate" hreflang="en-US" href="/en-us">
+    <link rel="alternate" hreflang="zh-Hans-CN" href="/zh">
+  `;
+  const result = extractHreflang(html, 'https://example.com/');
+  assert.deepEqual(result.malformedHreflang, []);
+});
+
+test('extractHreflang ignores rel="alternate" links that have no hreflang attribute (e.g. an RSS feed link)', () => {
+  const result = extractHreflang('<link rel="alternate" type="application/rss+xml" href="/feed.xml">', 'https://example.com/');
+  assert.equal(result.hreflangCount, 0);
+});
+
+test('extractHreflang ignores rel="canonical" and other non-alternate link tags', () => {
+  const result = extractHreflang('<link rel="canonical" href="/x"><link rel="stylesheet" href="/style.css">', 'https://example.com/');
+  assert.equal(result.hreflangCount, 0);
+});
+
+test('extractHreflang handles a page with no hreflang tags at all', () => {
+  const result = extractHreflang('<html><head><title>No hreflang</title></head></html>', 'https://example.com/');
+  assert.equal(result.hreflangCount, 0);
+  assert.equal(result.hasXDefault, false);
+  assert.equal(result.selfReferencingHreflang, false);
+  assert.deepEqual(result.hreflangTags, []);
+  assert.deepEqual(result.duplicateHreflangValues, []);
+  assert.deepEqual(result.malformedHreflang, []);
+});
+
+test('extractHreflang never throws when pageUrl is missing, even for a relative href', () => {
+  assert.doesNotThrow(() => extractHreflang('<link rel="alternate" hreflang="en" href="/x">', undefined));
+  const result = extractHreflang('<link rel="alternate" hreflang="en" href="/x">', undefined);
+  assert.equal(result.hreflangTags[0].href, null);
+  assert.equal(result.hreflangTags[0].rawHref, '/x');
+  assert.equal(result.selfReferencingHreflang, false);
+});
+
+test('extractHreflang is case-insensitive on rel="alternate" and tolerant of other rel tokens alongside it', () => {
+  const result = extractHreflang('<link rel="ALTERNATE" hreflang="en" href="/en">', 'https://example.com/');
+  assert.equal(result.hreflangCount, 1);
 });
 
 test('extractViewport reads meta viewport content', () => {
@@ -281,6 +407,10 @@ test('extractSeoFacts assembles a complete facts object from a realistic page', 
   assert.equal(facts.canonicalCount, 1);
   assert.equal(facts.multipleCanonicals, false);
   assert.deepEqual(facts.canonicalRawHrefs, ['https://example.com/widgets']);
+  assert.equal(facts.hreflangCount, 0, 'this fixture page declares no hreflang tags');
+  assert.deepEqual(facts.hreflangTags, []);
+  assert.equal(facts.hasXDefault, false);
+  assert.equal(facts.selfReferencingHreflang, false);
   assert.equal(facts.h1Count, 1);
   assert.equal(facts.indexable, true);
   assert.equal(facts.jsonLd.length, 1);
@@ -309,4 +439,26 @@ test('extractSeoFacts reports a missing canonical as null with zero count, not a
   assert.equal(facts.canonicalCount, 0);
   assert.equal(facts.multipleCanonicals, false);
   assert.deepEqual(facts.canonicalRawHrefs, []);
+});
+
+test('extractSeoFacts resolves hreflang declarations against the real page URL and surfaces self-reference/duplicate/malformed evidence', () => {
+  const html = `<!doctype html>
+<html><head>
+  <title>International page</title>
+  <link rel="alternate" hreflang="en-US" href="/en/page">
+  <link rel="alternate" hreflang="fr-FR" href="/fr/page">
+  <link rel="alternate" hreflang="x-default" href="/en/page">
+  <link rel="alternate" hreflang="de_DE" href="/de/page">
+</head><body></body></html>`;
+  const facts = extractSeoFacts(html, 'https://example.com/en/page', { statusCode: 200 });
+  assert.equal(facts.hreflangCount, 4);
+  assert.equal(facts.hasXDefault, true);
+  assert.equal(facts.selfReferencingHreflang, true, 'the en-US entry resolves to this page\'s own URL');
+  assert.deepEqual(facts.duplicateHreflangValues, []);
+  assert.equal(facts.malformedHreflang.length, 1);
+  assert.equal(facts.malformedHreflang[0].hreflang, 'de_DE');
+  assert.deepEqual(
+    facts.hreflangTags.map((t) => t.href),
+    ['https://example.com/en/page', 'https://example.com/fr/page', 'https://example.com/en/page', 'https://example.com/de/page']
+  );
 });

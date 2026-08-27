@@ -175,6 +175,121 @@ export function extractCanonical(html, pageUrl) {
   };
 }
 
+const XDEFAULT = 'x-default';
+// Deliberately permissive — this is a shape check ("does this look roughly
+// like a BCP47 language[-region] tag"), not a real ISO-639/ISO-3166 code
+// validator (that would need a large lookup table, at odds with this
+// module's zero-dependency, regex-based design). It exists to catch the
+// specific, common mistakes this project's own workflow docs already call
+// out (workflows/international-seo.md) — not to certify a code is real.
+const HREFLANG_SHAPE = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/;
+
+/**
+ * Classify one hreflang value as malformed (or not). Returns a short,
+ * human-readable issue string, or null if nothing looks wrong.
+ */
+function classifyHreflangValue(raw) {
+  if (!raw) return 'empty hreflang value';
+  if (raw.toLowerCase() === XDEFAULT) return null; // reserved special value, always valid
+  if (raw.includes('_')) return `uses underscore instead of hyphen ("${raw}") — hreflang codes must use hyphens, e.g. "en-US" not "en_US"`;
+  if (!HREFLANG_SHAPE.test(raw)) return `does not look like a valid BCP47 language[-region] tag ("${raw}")`;
+  // The single most common real-world hreflang mistake this project's own
+  // workflow docs explicitly call out: "UK" is not a valid ISO 3166-1
+  // region code (the country code is "GB"), but people write it anyway.
+  if (/^[a-zA-Z]{2,3}-uk$/i.test(raw)) {
+    return `"${raw}" — "UK" is not a valid ISO 3166-1 region code; "GB" is normally what's intended (e.g. "en-GB", not "en-UK")`;
+  }
+  return null;
+}
+
+/**
+ * Extract every <link rel="alternate" hreflang="..."> declaration on the
+ * page — the technical signal international/multilingual sites use to tell
+ * search engines which URL serves which language/region variant. See
+ * workflows/international-seo.md for the full methodology this data feeds;
+ * this function only gathers facts, it doesn't judge them.
+ *
+ * Returns:
+ *   hreflangTags            - every declaration, in document order, as
+ *                              { hreflang, href, rawHref }. `href` is
+ *                              resolved to an absolute URL against
+ *                              `pageUrl` (null if unresolvable); `rawHref`
+ *                              is the href exactly as written in the
+ *                              markup, for evidence when `href` is null.
+ *   hreflangCount           - total number of qualifying tags found.
+ *   hasXDefault             - true if an `hreflang="x-default"` declaration
+ *                              is present (the reserved catch-all value).
+ *   selfReferencingHreflang - true if any declaration's resolved href
+ *                              matches this page's own URL (fragment
+ *                              ignored, same convention as the
+ *                              canonical/finalUrl comparison below). The
+ *                              project's international-SEO workflow
+ *                              requires a page to reference itself in its
+ *                              own hreflang set — this is that check, as a
+ *                              fact, not an enforcement.
+ *   duplicateHreflangValues - hreflang values that appear on more than one
+ *                              tag pointing to genuinely different resolved
+ *                              targets — a real, conflicting-signal error,
+ *                              not just a harmless repeated declaration
+ *                              (the same value repeated with the *same*
+ *                              target is not flagged here).
+ *   malformedHreflang        - [{ hreflang, issue }] for values that look
+ *                              wrong — see classifyHreflangValue above.
+ *
+ * Cross-page reciprocity ("does the variant this page points to actually
+ * point back?") is intentionally out of scope here — it needs the whole
+ * crawled set, the same way orphan-page detection needs the sitemap (see
+ * `audit`'s cross-reference in lib/crawler.js), not just one page's HTML.
+ */
+export function extractHreflang(html, pageUrl) {
+  const links = findVoidTags(html, 'link');
+  const hreflangLinks = links.filter((l) => {
+    const relTokens = (l.rel || '').toLowerCase().split(/\s+/);
+    return relTokens.includes('alternate') && l.hreflang !== undefined;
+  });
+
+  const hreflangTags = hreflangLinks.map((l) => {
+    const rawHref = l.href !== undefined ? l.href : null;
+    return {
+      hreflang: l.hreflang,
+      href: rawHref ? toAbsoluteUrl(rawHref, pageUrl) : null,
+      rawHref,
+    };
+  });
+
+  const malformedHreflang = [];
+  for (const tag of hreflangTags) {
+    const issue = classifyHreflangValue(tag.hreflang);
+    if (issue) malformedHreflang.push({ hreflang: tag.hreflang, issue });
+  }
+
+  const hasXDefault = hreflangTags.some((t) => (t.hreflang || '').toLowerCase() === XDEFAULT);
+
+  const targetsByValue = new Map();
+  for (const tag of hreflangTags) {
+    const key = (tag.hreflang || '').toLowerCase();
+    if (!key) continue;
+    if (!targetsByValue.has(key)) targetsByValue.set(key, new Set());
+    targetsByValue.get(key).add(tag.href || tag.rawHref || '');
+  }
+  const duplicateHreflangValues = [...targetsByValue.entries()].filter(([, targets]) => targets.size > 1).map(([value]) => value);
+
+  let selfReferencingHreflang = false;
+  if (pageUrl) {
+    const pageKey = String(pageUrl).replace(/#.*$/, '');
+    selfReferencingHreflang = hreflangTags.some((t) => t.href && t.href.replace(/#.*$/, '') === pageKey);
+  }
+
+  return {
+    hreflangTags,
+    hreflangCount: hreflangTags.length,
+    hasXDefault,
+    selfReferencingHreflang,
+    duplicateHreflangValues,
+    malformedHreflang,
+  };
+}
+
 export function extractLangAttribute(html) {
   const htmlTag = html.match(/<html\b([^>]*)>/i);
   if (!htmlTag) return null;
@@ -318,6 +433,10 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
   const robotsMetaDirectives = extractRobotsMeta(metaTags);
   const xRobotsTagDirectives = extractXRobotsTag(xRobotsTagHeader);
   const { canonical, canonicalRawHrefs, canonicalCount, multipleCanonicals } = extractCanonical(html, pageUrl);
+  const { hreflangTags, hreflangCount, hasXDefault, selfReferencingHreflang, duplicateHreflangValues, malformedHreflang } = extractHreflang(
+    html,
+    pageUrl
+  );
   const headings = extractHeadings(html);
   const links = extractLinks(html, pageUrl);
   const images = extractImages(html, pageUrl);
@@ -336,6 +455,12 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     canonicalRawHrefs,
     canonicalCount,
     multipleCanonicals,
+    hreflangTags,
+    hreflangCount,
+    hasXDefault,
+    selfReferencingHreflang,
+    duplicateHreflangValues,
+    malformedHreflang,
     viewport: extractViewport(metaTags),
     lang: extractLangAttribute(html),
     robotsMetaDirectives,

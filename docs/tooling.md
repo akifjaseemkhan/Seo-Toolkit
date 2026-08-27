@@ -86,7 +86,7 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 
 ## What each command collects
 
-- **`page`** — one URL's status, redirect chain, content type, title, meta description, canonical (resolved to an absolute URL against the page's real, post-redirect URL — see the canonical note below), viewport, `lang`, robots meta + `X-Robots-Tag` directives, an indexability signal (see below), H1/H2 counts and text, Open Graph fields, Twitter card fields, JSON-LD blocks (parsed, with parse errors captured rather than thrown), internal/external links (with anchor text and `nofollow`), and images (`src`, `alt` presence vs. empty alt).
+- **`page`** — one URL's status, redirect chain, content type, title, meta description, canonical (resolved to an absolute URL against the page's real, post-redirect URL — see the canonical note below), hreflang declarations (also resolved to absolute URLs, with self-reference/duplicate/malformed evidence — see the hreflang note below), viewport, `lang`, robots meta + `X-Robots-Tag` directives, an indexability signal (see below), H1/H2 counts and text, Open Graph fields, Twitter card fields, JSON-LD blocks (parsed, with parse errors captured rather than thrown), internal/external links (with anchor text and `nofollow`), and images (`src`, `alt` presence vs. empty alt).
 - **`crawl`** — the same facts for every same-origin page reached by breadth-first traversal from the start URL, plus each page's crawl depth and which pages linked to it (within this crawl).
 - **`sitemap`** — parses `<urlset>` or `<sitemapindex>`. A `<sitemapindex>` is recursed into by default (bounded by `--max-sitemaps`, default 50, and `--max-sitemap-depth`, default 5) so `entryCount`/`urls`/`issues` always reflect the full aggregated set of real page URLs across every child sitemap, never just the list of child filenames — pass `--no-recurse` to see only the root document. Recursion is same-origin, deduplicates repeated/cyclical child sitemap references (each fetched at most once), and records every file it touched in `sitemapsProcessed` plus anything it declined to follow (cross-origin, duplicate, or bound-exceeded) in `skipped`; a `truncated: true` flag means the bounds were hit before the whole tree was covered. Validation flags missing/malformed `loc` values, exact and trailing-slash-variant duplicates, and paths that heuristically look non-public (admin/account/cart-like segments) — a heuristic flag for a human to verify, not a claim of certainty. `--check-status` optionally spot-checks the first N aggregated URLs' real HTTP status.
 - **`robots`** — parses groups/rules/`Sitemap:` declarations, and (with `--important`) flags whether specific paths are blocked for a given user-agent, using longest-match-wins evaluation with `*` wildcards and `$` end-anchors.
@@ -105,6 +105,18 @@ This cross-reference is sitemap-index-aware: `audit` resolves the full sitemap t
 The `canonical` field on a page is always resolved to an absolute URL, against that page's real, post-redirect URL — a relative (`widgets`), root-relative (`/widgets`), or already-absolute canonical href are all handled the same way, and a query string or fragment present in the href is preserved exactly as declared, not stripped. A canonical tag with no `href`, an empty `href`, or a non-navigable scheme (e.g. `javascript:`) resolves to `canonical: null` rather than throwing or silently keeping a broken value.
 
 A page can declare more than one `<link rel="canonical">` — real search engines only honor one canonical signal per page, so this is a genuine, common SEO problem, not just noise. `page`/`crawl`'s facts always preserve the *first* declaration (in document order) as `canonical`, matching this tool's existing "first match wins" convention elsewhere — but `canonicalCount` and `multipleCanonicals` surface whether more than one was actually declared, and `canonicalRawHrefs` lists every declaration's href exactly as written in the markup (unresolved), in document order, so you can see what every one of them actually said rather than just the one that won. The human-readable `page` summary flags this on the `Canonical:` line instead of silently showing only the first as if there were no ambiguity.
+
+## The hreflang note
+
+`hreflangTags` lists every `<link rel="alternate" hreflang="...">` declaration on the page, in document order, as `{ hreflang, href, rawHref }` — `href` is resolved to an absolute URL the same way `canonical` is (relative/root-relative/absolute all handled consistently, query strings and fragments preserved); `rawHref` is the exact, unresolved value from the markup, for when `href` comes back `null` because it didn't resolve. `hreflangCount` is the total number of declarations found.
+
+Three specific facts are surfaced because `workflows/international-seo.md` explicitly needs them for its audit procedure, not because this tool is guessing at what might be useful:
+- **`selfReferencingHreflang`** — whether the page includes an entry pointing back to its own (real, post-redirect) URL. A correct hreflang set is supposed to reference every variant *including itself* — a page missing this is a real, common setup mistake.
+- **`hasXDefault`** — whether an `hreflang="x-default"` (the reserved catch-all value) declaration is present. It's recognized as valid, never flagged as malformed.
+- **`duplicateHreflangValues`** — hreflang values declared more than once pointing to genuinely *different* resolved targets (a real, conflicting signal — the same value repeated with the exact same target is a harmless, unflagged redundancy).
+- **`malformedHreflang`** — `[{ hreflang, issue }]` for values that look wrong: empty, using an underscore instead of a hyphen (`en_US` instead of `en-US`), not shaped like a BCP47 tag at all, or the specific, very common `"xx-UK"` mistake (`"UK"` isn't a valid ISO 3166-1 region code — `"GB"` is). This is a shape/pattern check, not a real ISO-639/ISO-3166 code validator — it exists to catch the exact mistakes this project's own workflow docs already call out, not to certify a code is registered.
+
+**Cross-page reciprocity is out of scope here, deliberately** — whether the variant a page points to actually points *back* needs the whole crawled set, the same way real orphan-page detection needs the sitemap (see the orphan-detection note above), not just one page's HTML. `page`/`crawl` give you the per-page facts a reciprocity check would need; they don't perform that cross-reference themselves.
 
 ## Known limitations (read before treating an absence as proof)
 
@@ -138,6 +150,9 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
       "title": "...", "metaDescription": "...",
       "canonical": "...",                 // resolved to an absolute URL; null if missing/malformed — see the canonical-resolution note above
       "canonicalCount": 1, "multipleCanonicals": false, "canonicalRawHrefs": ["..."], // every declared href, unresolved, in document order
+      "hreflangTags": [ { "hreflang": "en-US", "href": "...", "rawHref": "..." } ], // every declaration, href resolved the same way canonical is
+      "hreflangCount": 1, "hasXDefault": false, "selfReferencingHreflang": true,
+      "duplicateHreflangValues": [], "malformedHreflang": [],  // see the hreflang note above
       "viewport": "...", "lang": "en",
       "robotsMetaDirectives": ["noindex"], "xRobotsTagDirectives": [],
       "indexable": false, "indexabilityReasons": ["noindex directive present ..."],
@@ -179,6 +194,7 @@ Keep this schema in sync with `tools/seo-tool/lib/report.js` when either changes
 
 - Every HTML extractor (title, description, robots meta, H1/H2 counting, JSON-LD, internal/external link classification) and URL normalization.
 - Canonical extraction specifically: absolute/relative/root-relative href resolution, query-string/fragment preservation, multiple-declaration detection (first-wins plus the full raw-href evidence list), missing/empty/no-href/non-navigable-scheme cases, and — through a real crawl against a local fixture server — a relative canonical on a redirected page resolving against its real post-redirect URL, not the originally-requested one.
+- hreflang extraction specifically: href resolution (same absolute/relative/root-relative cases as canonical), self-referencing detection (present and absent), `x-default` recognition, duplicate-value detection (conflicting vs. harmless-repeat targets), malformed-code detection (empty, underscore separator, non-BCP47 shape, the `"xx-UK"` mistake), non-hreflang `rel="alternate"` links correctly ignored, and — through both a real crawl and the real CLI — resolution/self-reference against a page's real post-redirect URL.
 - `robots.txt` parsing and rule evaluation, including wildcard/end-anchor patterns and longest-match-wins.
 - Sitemap parsing and validation, and `<sitemapindex>` tree resolution specifically — recursion into nested indexes, duplicate/cycle protection, same-origin enforcement, and bounded truncation (`maxSitemaps`/`maxDepth`).
 - Link-graph orphan/broken-link detection.

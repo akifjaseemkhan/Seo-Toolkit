@@ -18,7 +18,7 @@ const ROUTES = {
   </body></html>`,
   '/a': `<html><head><title>Page A</title></head><body><a href="/c">C</a><a href="/">Home</a></body></html>`,
   '/c': `<html><head><title>Page C</title></head><body>Leaf page.</body></html>`,
-  '/b-new': `<html><head><title>Page B New</title><link rel="canonical" href="/b-new"></head><body>Landed after redirect.</body></html>`,
+  '/b-new': `<html><head><title>Page B New</title><link rel="canonical" href="/b-new"><link rel="alternate" hreflang="en" href="/b-new"></head><body>Landed after redirect.</body></html>`,
   '/blocked': `<html><head><title>Should not be fetched</title></head><body></body></html>`,
   '/robots.txt': `User-agent: *\nDisallow: /blocked\n`,
 };
@@ -86,6 +86,11 @@ test('crawl() discovers pages, follows redirects, records 404s, respects robots.
     // resolve against the page's real, post-redirect final URL, not the
     // originally-requested /b.
     assert.equal(b.canonical, byPath('/b-new'), 'a relative canonical on a redirected page must resolve against the final URL, not the requested one');
+    // Same principle for hreflang: it must resolve — and self-reference —
+    // against the real final URL, not the originally-requested one.
+    assert.equal(b.hreflangCount, 1);
+    assert.equal(b.hreflangTags[0].href, byPath('/b-new'));
+    assert.equal(b.selfReferencingHreflang, true, 'the hreflang entry resolves to the page\'s own post-redirect URL');
 
     const missing = findPage(byPath('/missing'));
     assert.ok(missing, '404 page should be recorded, not dropped');

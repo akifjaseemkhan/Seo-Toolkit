@@ -81,6 +81,17 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/international') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>International Page</title>' +
+          '<link rel="alternate" hreflang="en-US" href="/international">' +
+          '<link rel="alternate" hreflang="fr-FR" href="/fr/international">' +
+          '<link rel="alternate" hreflang="en_GB" href="/gb/international">' +
+          '</head><body>x</body></html>'
+      );
+      return;
+    }
     res.writeHead(404);
     res.end('not found');
   });
@@ -245,6 +256,50 @@ test('CLI page human-readable output flags multiple declared canonicals instead 
       stdout.includes(`Canonical: ${baseUrl}/canonical-target (2 canonical tags declared`),
       `expected the Canonical line to flag multiple declarations, got:\n${stdout}`
     );
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json surfaces resolved hreflang tags plus self-reference/malformed evidence end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/international`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.hreflangCount, 3);
+    assert.equal(page.selfReferencingHreflang, true, 'the en-US entry resolves to this page\'s own URL');
+    assert.equal(page.hasXDefault, false);
+    assert.deepEqual(page.duplicateHreflangValues, []);
+    assert.equal(page.malformedHreflang.length, 1);
+    assert.equal(page.malformedHreflang[0].hreflang, 'en_GB');
+    assert.deepEqual(page.hreflangTags.map((t) => t.hreflang), ['en-US', 'fr-FR', 'en_GB']);
+    assert.equal(page.hreflangTags[1].href, `${baseUrl}/fr/international`);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows a Hreflang line with self-reference and malformed-count evidence', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/international`]);
+    assert.equal(code, 0);
+    assert.ok(
+      stdout.includes('Hreflang: 3 tag(s), self-referencing: true (1 malformed)'),
+      `expected a Hreflang summary line, got:\n${stdout}`
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output omits the Hreflang line entirely when a page declares none', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(code, 0);
+    assert.ok(!stdout.includes('Hreflang:'), 'the home fixture page declares no hreflang tags, so the line should not appear at all');
   } finally {
     server.close();
   }

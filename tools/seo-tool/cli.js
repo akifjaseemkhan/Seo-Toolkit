@@ -86,6 +86,12 @@ function printPageSummary(page) {
   console.log(`  Title: ${page.title || '(missing)'}`);
   console.log(`  Meta description: ${page.metaDescription || '(missing)'}`);
   console.log(`  Canonical: ${page.canonical || '(missing)'}${page.multipleCanonicals ? ` (${page.canonicalCount} canonical tags declared — only the first is used; see canonicalRawHrefs in --json for all of them)` : ''}`);
+  if (page.hreflangCount) {
+    const hreflangIssues = [];
+    if (page.duplicateHreflangValues && page.duplicateHreflangValues.length) hreflangIssues.push(`duplicate values: ${page.duplicateHreflangValues.join(', ')}`);
+    if (page.malformedHreflang && page.malformedHreflang.length) hreflangIssues.push(`${page.malformedHreflang.length} malformed`);
+    console.log(`  Hreflang: ${page.hreflangCount} tag(s), self-referencing: ${page.selfReferencingHreflang}${page.hasXDefault ? ', has x-default' : ''}${hreflangIssues.length ? ` (${hreflangIssues.join('; ')})` : ''}`);
+  }
   console.log(`  H1 count: ${page.h1Count ?? '?'}  H2 count: ${page.h2Count ?? '?'}`);
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
   console.log(`  Indexable signal: ${page.indexable === undefined ? '?' : page.indexable}${page.indexabilityReasons && page.indexabilityReasons.length ? ` (${page.indexabilityReasons.join('; ')})` : ''}`);
