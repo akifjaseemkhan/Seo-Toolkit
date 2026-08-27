@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findOrphanCandidates, findOrphansAgainstKnownUrls, findCrawlDepthOutliers, findBrokenInternalLinks, buildLinkGraph } from '../lib/link-graph.js';
+import {
+  findOrphanCandidates,
+  findOrphansAgainstKnownUrls,
+  findCrawlDepthOutliers,
+  findBrokenInternalLinks,
+  findSitemapIndexabilityConflicts,
+  buildLinkGraph,
+} from '../lib/link-graph.js';
 
 function page(url, overrides = {}) {
   return {
@@ -107,4 +114,78 @@ test('buildLinkGraph surfaces sitemap-based orphans when knownUrls is supplied',
   const graph = buildLinkGraph(pages, 'https://example.com/', { knownUrls: ['https://example.com/a', 'https://example.com/never-linked'] });
   assert.deepEqual(graph.orphanCandidates, ['https://example.com/never-linked']);
   assert.equal(graph.orphanDetectionUsedKnownUrls, true);
+});
+
+// ---------- findSitemapIndexabilityConflicts ----------
+
+test('findSitemapIndexabilityConflicts flags a sitemap URL that turned out noindex', () => {
+  const pages = [page('https://example.com/noindexed', { indexable: false, indexabilityReasons: ['noindex directive present (meta robots or X-Robots-Tag)'] })];
+  const conflicts = findSitemapIndexabilityConflicts(pages, ['https://example.com/noindexed']);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].url, 'https://example.com/noindexed');
+  assert.match(conflicts[0].reason, /noindex/);
+});
+
+test('findSitemapIndexabilityConflicts flags a sitemap URL that returned a non-200 status', () => {
+  const pages = [page('https://example.com/missing', { status: 404, indexable: false, indexabilityReasons: ['non-200 status (404)'] })];
+  const conflicts = findSitemapIndexabilityConflicts(pages, ['https://example.com/missing']);
+  assert.equal(conflicts.length, 1);
+  assert.match(conflicts[0].reason, /non-200 status \(404\)/);
+});
+
+test('findSitemapIndexabilityConflicts flags a sitemap URL blocked by robots.txt', () => {
+  const pages = [page('https://example.com/blocked', { skipped: true, skipReason: 'blocked by robots.txt', status: undefined })];
+  const conflicts = findSitemapIndexabilityConflicts(pages, ['https://example.com/blocked']);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0].reason, 'blocked by robots.txt');
+});
+
+test('findSitemapIndexabilityConflicts does not flag a genuinely indexable sitemap URL', () => {
+  const pages = [page('https://example.com/fine', { indexable: true })];
+  assert.deepEqual(findSitemapIndexabilityConflicts(pages, ['https://example.com/fine']), []);
+});
+
+test('findSitemapIndexabilityConflicts does not report a sitemap URL that was never reached/fetched by this crawl (neither confirmed conflicting nor clean)', () => {
+  const pages = [page('https://example.com/fine', { indexable: true })];
+  const conflicts = findSitemapIndexabilityConflicts(pages, ['https://example.com/fine', 'https://example.com/never-crawled']);
+  assert.deepEqual(conflicts, [], 'the never-crawled URL has no indexability signal to report either way');
+});
+
+test('findSitemapIndexabilityConflicts does not flag a page skipped for a reason other than robots.txt', () => {
+  const pages = [page('https://example.com/x', { skipped: true, skipReason: 'some other reason', status: undefined })];
+  assert.deepEqual(findSitemapIndexabilityConflicts(pages, ['https://example.com/x']), []);
+});
+
+test('findSitemapIndexabilityConflicts does not flag a page that failed to fetch (indexability unconfirmable, not a confirmed conflict)', () => {
+  const pages = [page('https://example.com/x', { error: { type: 'timeout' }, status: null, indexable: undefined })];
+  assert.deepEqual(findSitemapIndexabilityConflicts(pages, ['https://example.com/x']), []);
+});
+
+test('findSitemapIndexabilityConflicts matches a sitemap URL against either the requested or the final (post-redirect) crawled URL', () => {
+  const pages = [page('https://example.com/old', { finalUrl: 'https://example.com/new', indexable: false, indexabilityReasons: ['noindex directive present'] })];
+  const byRequested = findSitemapIndexabilityConflicts(pages, ['https://example.com/old']);
+  assert.equal(byRequested.length, 1);
+  const byFinal = findSitemapIndexabilityConflicts(pages, ['https://example.com/new']);
+  assert.equal(byFinal.length, 1);
+});
+
+test('findSitemapIndexabilityConflicts never throws on an unparseable sitemap URL or an empty pages array', () => {
+  assert.doesNotThrow(() => findSitemapIndexabilityConflicts([], ['not a url at all']));
+  assert.deepEqual(findSitemapIndexabilityConflicts([], ['not a url at all']), []);
+});
+
+test('findSitemapIndexabilityConflicts does not double-report the same sitemap URL listed twice', () => {
+  const pages = [page('https://example.com/noindexed', { indexable: false, indexabilityReasons: ['noindex'] })];
+  const conflicts = findSitemapIndexabilityConflicts(pages, ['https://example.com/noindexed', 'https://example.com/noindexed']);
+  assert.equal(conflicts.length, 1);
+});
+
+test('buildLinkGraph surfaces sitemapIndexabilityConflicts only when knownUrls is supplied', () => {
+  const pages = [page('https://example.com/noindexed', { indexable: false, indexabilityReasons: ['noindex'] })];
+  const withoutKnownUrls = buildLinkGraph(pages, 'https://example.com/');
+  assert.deepEqual(withoutKnownUrls.sitemapIndexabilityConflicts, [], 'without an independent URL list, there is nothing to cross-reference against');
+
+  const withKnownUrls = buildLinkGraph(pages, 'https://example.com/', { knownUrls: ['https://example.com/noindexed'] });
+  assert.equal(withKnownUrls.sitemapIndexabilityConflicts.length, 1);
+  assert.equal(withKnownUrls.sitemapIndexabilityConflicts[0].url, 'https://example.com/noindexed');
 });

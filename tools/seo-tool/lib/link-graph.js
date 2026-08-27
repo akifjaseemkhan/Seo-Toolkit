@@ -13,7 +13,7 @@ function safeNormalize(urlString) {
 }
 
 export const INCOMPLETE_CRAWL_NOTE =
-  'These findings are bounded by what this crawl actually discovered and fetched (see truncatedByMaxPages and maxPages) and, for orphan detection, by whether an independent URL list (e.g. the sitemap) was supplied. A page flagged here is a "potential orphan" within this crawl\'s scope — it is not mathematically proven to be an orphan across the whole site.';
+  'These findings are bounded by what this crawl actually discovered and fetched (see truncatedByMaxPages and maxPages) and, for orphan detection and sitemap/indexability cross-referencing, by whether an independent URL list (e.g. the sitemap) was supplied. A page flagged as a "potential orphan" is scoped to what this crawl actually reached, not mathematically proven across the whole site; a sitemap URL outside that reached scope is neither confirmed conflicting nor confirmed clean for sitemapIndexabilityConflicts — it is simply not reported either way, not silently assumed fine.';
 
 /**
  * IMPORTANT: a pure single-seed breadth-first crawl can, by construction,
@@ -59,6 +59,60 @@ export function findOrphansAgainstKnownUrls(pages, knownUrls, startUrl) {
     if (!discoveredTargets.has(key)) out.push(url);
   }
   return out;
+}
+
+/**
+ * Sitemap entries that were also reached and fetched within this crawl but
+ * turned out to be non-indexable (noindex, non-200 status) or blocked by
+ * robots.txt — a page listed in the sitemap should be indexable, so listing
+ * a noindex/blocked/non-200 URL sends a contradictory signal. See
+ * checklists/technical-checklist.md ("noindex and sitemap inclusion never
+ * contradict each other") and checklists/indexing-checklist.md ("Never
+ * leave a sitemap entry for a noindex'd, blocked, or non-200 URL").
+ *
+ * Bounded exactly the way findOrphansAgainstKnownUrls is: only a sitemap
+ * URL that was ALSO reached and fetched within this crawl can be checked
+ * here — its indexability signal only exists once fetched. A sitemap URL
+ * outside the crawl's discovered/fetched scope is neither confirmed
+ * conflicting nor confirmed clean, so it is not reported either way.
+ */
+export function findSitemapIndexabilityConflicts(pages, knownUrls) {
+  const byKey = new Map();
+  for (const p of pages) {
+    const requestedKey = safeNormalize(p.requestedUrl);
+    if (requestedKey && !byKey.has(requestedKey)) byKey.set(requestedKey, p);
+    const finalKey = safeNormalize(p.finalUrl);
+    if (finalKey && !byKey.has(finalKey)) byKey.set(finalKey, p);
+  }
+
+  const conflicts = [];
+  const seenUrlKeys = new Set();
+  for (const url of knownUrls) {
+    const key = safeNormalize(url);
+    if (!key || seenUrlKeys.has(key)) continue;
+    seenUrlKeys.add(key);
+
+    const page = byKey.get(key);
+    if (!page) continue; // outside this crawl's discovered/fetched scope — not confirmable either way
+
+    if (page.skipped) {
+      if (page.skipReason === 'blocked by robots.txt') {
+        conflicts.push({ url, reason: 'blocked by robots.txt' });
+      }
+      continue; // any other skip reason isn't a confirmed conflict
+    }
+    if (page.error) continue; // fetch failed — indexability can't be confirmed either way
+
+    if (typeof page.status === 'number' && page.status !== 200) {
+      conflicts.push({ url, reason: `non-200 status (${page.status})` });
+      continue;
+    }
+    if (page.indexable === false) {
+      const reason = page.indexabilityReasons && page.indexabilityReasons.length ? page.indexabilityReasons.join('; ') : 'marked non-indexable';
+      conflicts.push({ url, reason });
+    }
+  }
+  return conflicts;
 }
 
 /** Pages whose BFS crawl depth exceeds the given threshold. */
@@ -123,12 +177,14 @@ export function buildLinkGraph(pages, startUrl, { depthThreshold = 3, knownUrls 
   const crawlOnlyOrphans = findOrphanCandidates(pages, startUrl);
   const knownUrlOrphans = knownUrls.length ? findOrphansAgainstKnownUrls(pages, knownUrls, startUrl) : [];
   const orphanCandidates = Array.from(new Set([...crawlOnlyOrphans, ...knownUrlOrphans]));
+  const sitemapIndexabilityConflicts = knownUrls.length ? findSitemapIndexabilityConflicts(pages, knownUrls) : [];
   return {
     orphanCandidates,
     orphanDetectionUsedKnownUrls: knownUrls.length > 0,
     crawlDepthOutliers: findCrawlDepthOutliers(pages, depthThreshold),
     brokenInternalLinks: broken,
     unverifiedInternalLinks: unverified,
+    sitemapIndexabilityConflicts,
     note: INCOMPLETE_CRAWL_NOTE,
   };
 }

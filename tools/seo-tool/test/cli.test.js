@@ -454,6 +454,76 @@ test('CLI audit: normal successful execution combines crawl, sitemap, and robots
     // duplicate-content section should be present but empty here — this
     // confirms it's actually wired into `audit`, not just `crawl`.
     assert.deepEqual(report.duplicateContent, { duplicateTitles: [], duplicateMetaDescriptions: [] });
+    // Both crawled, sitemap-listed pages are indexable, so this must be
+    // present but empty — confirms the field exists without a false positive.
+    assert.deepEqual(report.linkGraph.sitemapIndexabilityConflicts, []);
+  } finally {
+    server.close();
+  }
+});
+
+// A separate, self-contained fixture server (own robots.txt/sitemap.xml,
+// isolated from startFixtureServer's) specifically for the
+// sitemap/indexability conflict tests below — `audit` always fetches
+// /sitemap.xml at the origin root, and the shared fixture's sitemap.xml is
+// already asserted on with an exact entryCount elsewhere, so this needs its
+// own server rather than adding a third entry there.
+function startSitemapConflictFixtureServer() {
+  const server = createServer((req, res) => {
+    const origin = `http://127.0.0.1:${server.address() ? server.address().port : ''}`;
+    if (req.url === '/') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Conflict Fixture Home</title></head><body><a href="/noindexed-but-listed">Noindexed</a></body></html>');
+      return;
+    }
+    if (req.url === '/noindexed-but-listed') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Noindexed But Listed</title><meta name="robots" content="noindex"></head><body>x</body></html>');
+      return;
+    }
+    if (req.url === '/robots.txt') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('User-agent: *\n');
+      return;
+    }
+    if (req.url === '/sitemap.xml') {
+      res.writeHead(200, { 'Content-Type': 'application/xml' });
+      res.end(
+        `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${origin}/</loc></url><url><loc>${origin}/noindexed-but-listed</loc></url></urlset>`
+      );
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  });
+  return new Promise((resolveServer) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolveServer({ server, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
+test('CLI audit --json flags a sitemap-listed URL that turned out noindex as a sitemapIndexabilityConflict', async () => {
+  const { server, baseUrl } = await startSitemapConflictFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['audit', `${baseUrl}/`, '--max-pages=5', '--delay=0', '--json']);
+    assert.equal(code, 0);
+    const report = JSON.parse(stdout);
+    assert.equal(report.linkGraph.sitemapIndexabilityConflicts.length, 1);
+    assert.equal(report.linkGraph.sitemapIndexabilityConflicts[0].url, `${baseUrl}/noindexed-but-listed`);
+    assert.match(report.linkGraph.sitemapIndexabilityConflicts[0].reason, /noindex/);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI audit human-readable output shows the sitemap/indexability conflict count', async () => {
+  const { server, baseUrl } = await startSitemapConflictFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['audit', `${baseUrl}/`, '--max-pages=5', '--delay=0']);
+    assert.equal(code, 0);
+    assert.match(stdout, /Sitemap\/indexability conflicts: 1/);
   } finally {
     server.close();
   }
