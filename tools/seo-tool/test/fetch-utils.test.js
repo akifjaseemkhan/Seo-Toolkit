@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import dns from 'node:dns';
 import {
   fetchOnce,
   fetchFollowingRedirects,
@@ -110,38 +111,38 @@ function startFixtureServer() {
 }
 
 /**
- * A loopback-only, dual-stack fixture server for the handful of tests that
- * specifically need the literal "localhost" hostname to resolve to a real
- * listener. Which address family Node resolves "localhost" to first (and
- * whether a fallback to the other family happens, and how fast) is
- * genuinely OS- and Node-version-dependent — this is exactly what broke
- * this suite in CI (GitHub Actions ubuntu-latest + Node 20) while passing
- * locally, since the single-stack fixture above only listens on the IPv4
- * loopback address. Listening on *both* loopback addresses explicitly
- * (never a wildcard 0.0.0.0/:: bind, so this never listens on anything
- * beyond the local machine) removes that dependency entirely: whichever
- * family gets picked, a real server answers immediately, deterministically,
- * on every platform and Node version — no reliance on DNS ordering or
- * fallback/retry behavior of any kind.
+ * Forces Node's `dns.lookup('localhost', ...)` to resolve to the IPv4
+ * loopback address only, for the duration of `fn`. See the fuller
+ * explanation in test/support/force-localhost-ipv4.mjs (used by the CLI
+ * integration test, which needs the same override inside a real
+ * subprocess) — this in-process version exists so the fetch-utils-level
+ * tests can exercise the same real production fetchOnce/
+ * fetchFollowingRedirects code and the real, proven-in-CI 127.0.0.1-only
+ * fixture server, while still genuinely requesting the literal "localhost"
+ * hostname, deterministically, on every platform and Node version. It
+ * matches Node's documented `dns.lookup` signature exactly, including the
+ * `{ all: true }` array-callback form that `net`'s own internals use.
  */
-function startDualStackLoopbackServer(handler) {
-  const v4 = createServer(handler);
-  const v6 = createServer(handler);
-  return new Promise((resolveServers, rejectServers) => {
-    v6.once('error', rejectServers);
-    v4.listen(0, '127.0.0.1', () => {
-      const { port } = v4.address();
-      v6.listen(port, '::1', () => {
-        resolveServers({
-          baseUrl: `http://localhost:${port}`,
-          close: () => {
-            v4.close();
-            v6.close();
-          },
-        });
-      });
-    });
-  });
+async function withLocalhostForcedToIPv4(fn) {
+  const original = dns.lookup;
+  dns.lookup = (hostname, options, callback) => {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    if (hostname !== 'localhost') {
+      return original(hostname, options, callback);
+    }
+    if (options && options.all) {
+      return process.nextTick(callback, null, [{ address: '127.0.0.1', family: 4 }]);
+    }
+    return process.nextTick(callback, null, '127.0.0.1', 4);
+  };
+  try {
+    return await fn();
+  } finally {
+    dns.lookup = original;
+  }
 }
 
 test('fetchOnce performs a successful GET and does not follow redirects itself', async () => {
@@ -427,59 +428,45 @@ test('fetchFollowingRedirects blocks a redirect to a private IPv6 target before 
   }
 });
 
-// A small, shared handler for the dual-stack "localhost" tests below — only
-// the three routes those tests actually need, kept separate from the main
-// fixture's larger route table above.
-function localhostTestHandler(req, res) {
-  if (req.url === '/ok') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end('<html><body>ok</body></html>');
-    return;
-  }
-  if (req.url === '/redirect-once') {
-    res.writeHead(302, { Location: '/ok' });
-    res.end();
-    return;
-  }
-  if (req.url === '/redirect-to-private') {
-    res.writeHead(302, { Location: 'http://192.168.1.1/admin' });
-    res.end();
-    return;
-  }
-  res.writeHead(404);
-  res.end('not found');
-}
-
 test('a request made against the literal "localhost" hostname (not just 127.0.0.1) succeeds unaffected', async () => {
-  const { close, baseUrl } = await startDualStackLoopbackServer(localhostTestHandler);
+  const { server, baseUrl } = await startFixtureServer();
+  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
   try {
-    const result = await fetchOnce(baseUrl + '/ok');
-    assert.equal(result.ok, true);
-    assert.equal(result.status, 200);
+    await withLocalhostForcedToIPv4(async () => {
+      const result = await fetchOnce(localhostUrl + '/ok');
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 200);
+    });
   } finally {
-    close();
+    server.close();
   }
 });
 
 test('a localhost -> localhost redirect (the relative Location preserves the "localhost" host) remains allowed', async () => {
-  const { close, baseUrl } = await startDualStackLoopbackServer(localhostTestHandler);
+  const { server, baseUrl } = await startFixtureServer();
+  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
   try {
-    const result = await fetchFollowingRedirects(baseUrl + '/redirect-once');
-    assert.equal(result.error, null);
-    assert.equal(result.status, 200);
-    assert.equal(result.finalUrl, baseUrl + '/ok');
+    await withLocalhostForcedToIPv4(async () => {
+      const result = await fetchFollowingRedirects(localhostUrl + '/redirect-once');
+      assert.equal(result.error, null);
+      assert.equal(result.status, 200);
+      assert.equal(result.finalUrl, localhostUrl + '/ok');
+    });
   } finally {
-    close();
+    server.close();
   }
 });
 
 test('a localhost -> private-network redirect is still blocked (starting from an allowed host does not grant the next hop a pass)', async () => {
-  const { close, baseUrl } = await startDualStackLoopbackServer(localhostTestHandler);
+  const { server, baseUrl } = await startFixtureServer();
+  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
   try {
-    const result = await fetchFollowingRedirects(baseUrl + '/redirect-to-private');
-    assert.equal(result.error.type, 'blocked_private_network');
-    assert.equal(result.redirectChain.length, 1, 'only the allowed localhost hop was fetched; the private hop was refused');
+    await withLocalhostForcedToIPv4(async () => {
+      const result = await fetchFollowingRedirects(localhostUrl + '/redirect-to-private');
+      assert.equal(result.error.type, 'blocked_private_network');
+      assert.equal(result.redirectChain.length, 1, 'only the allowed localhost hop was fetched; the private hop was refused');
+    });
   } finally {
-    close();
+    server.close();
   }
 });

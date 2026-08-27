@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,10 +20,15 @@ const CLI_PATH = join(__dirname, '..', 'cli.js');
  * output formatting), not a call into an in-process function, so nothing
  * here can pass while the real `node cli.js ...` invocation is broken.
  * Normalizes both success and failure into one shape for easy assertions.
+ *
+ * `nodeArgs` lets a caller pass extra flags to the `node` invocation itself
+ * (before cli.js) — used solely by the "localhost" test below to load the
+ * DNS-forcing preload module via `--import`. Every other call site leaves
+ * it at the default empty array and is unaffected.
  */
-async function runCli(args, options = {}) {
+async function runCli(args, options = {}, nodeArgs = []) {
   try {
-    const { stdout, stderr } = await execFileAsync('node', [CLI_PATH, ...args], { timeout: 15000, ...options });
+    const { stdout, stderr } = await execFileAsync('node', [...nodeArgs, CLI_PATH, ...args], { timeout: 15000, ...options });
     return { stdout, stderr, code: 0 };
   } catch (err) {
     return { stdout: err.stdout || '', stderr: err.stderr || '', code: typeof err.code === 'number' ? err.code : 1 };
@@ -80,46 +85,16 @@ function startFixtureServer() {
   });
 }
 
-/**
- * A loopback-only, dual-stack variant of the fixture server, used solely by
- * the "localhost" CLI test below. Which address family Node resolves the
- * literal "localhost" hostname to (and whether/how fast it falls back to
- * the other one) is genuinely OS- and Node-version-dependent — that's
- * exactly what broke this suite in CI (GitHub Actions ubuntu-latest + Node
- * 20) while passing locally, since startFixtureServer() above only listens
- * on the IPv4 loopback address. Listening on *both* loopback addresses
- * explicitly (never a wildcard 0.0.0.0/:: bind) removes that dependency:
- * whichever family gets picked, a real server answers immediately and
- * deterministically, on every platform and Node version.
- */
-function startDualStackFixtureServer() {
-  const handler = (req, res) => {
-    if (req.url === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<html><head><title>CLI Fixture Home</title></head><body><a href="/about">About</a></body></html>');
-      return;
-    }
-    res.writeHead(404);
-    res.end('not found');
-  };
-  const v4 = createServer(handler);
-  const v6 = createServer(handler);
-  return new Promise((resolveServers, rejectServers) => {
-    v6.once('error', rejectServers);
-    v4.listen(0, '127.0.0.1', () => {
-      const { port } = v4.address();
-      v6.listen(port, '::1', () => {
-        resolveServers({
-          baseUrl: `http://localhost:${port}`,
-          close: () => {
-            v4.close();
-            v6.close();
-          },
-        });
-      });
-    });
-  });
-}
+// Preload module (loaded into the CLI *subprocess* via `node --import`)
+// that forces the literal "localhost" hostname to resolve to the IPv4
+// loopback address only — see test/support/force-localhost-ipv4.mjs for the
+// full explanation. This is what lets the "localhost" CLI test below reuse
+// the plain, proven-in-CI startFixtureServer() (127.0.0.1-only) instead of
+// needing a real IPv6 listener, since which address family the OS/Node
+// would otherwise resolve "localhost" to (and whether it falls back to the
+// other one, and how fast) is not something this test can control or
+// portably rely on inside a real child process.
+const FORCE_LOCALHOST_IPV4_PRELOAD = pathToFileURL(join(__dirname, 'support', 'force-localhost-ipv4.mjs')).href;
 
 // ---------- parseArgs / num (pure, direct unit tests) ----------
 
@@ -381,13 +356,14 @@ test('CLI page --allow-private-network explicitly lifts the block (the request i
 });
 
 test('CLI still works normally against "localhost" (not just 127.0.0.1), confirming the default protection never regresses the documented local-dev-server use case', async () => {
-  const { close, baseUrl } = await startDualStackFixtureServer();
+  const { server, baseUrl } = await startFixtureServer();
+  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
   try {
-    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
+    const { stdout, code } = await runCli(['page', `${localhostUrl}/`], {}, ['--import', FORCE_LOCALHOST_IPV4_PRELOAD]);
     assert.equal(code, 0);
     assert.match(stdout, /Status: 200/);
     assert.match(stdout, /Title: CLI Fixture Home/);
   } finally {
-    close();
+    server.close();
   }
 });
