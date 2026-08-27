@@ -32,8 +32,13 @@ function safeNormalize(urlString) {
  * A page with a missing/empty value for the field is excluded entirely —
  * that's a different, already-reported problem (see extractTitle /
  * extractMetaDescription, whose `null` already flags "missing"), not a
- * duplicate. External, robots-skipped, and errored pages are excluded too,
- * since only real, fetched, indexable-candidate pages are meaningful here.
+ * duplicate. External, robots-skipped, errored, and explicitly
+ * non-indexable pages (noindex, a non-200 response that still returned a
+ * real body — e.g. a shared custom error page) are excluded too, since
+ * checklists/on-page-checklist.md's requirement is specifically about
+ * *indexable* pages: two 404s sharing a generic "Page Not Found" title is
+ * expected and harmless, not a real duplicate-content problem, and
+ * including it would just be noise alongside genuine findings.
  *
  * Returns groups with more than one distinct page, most-duplicated first.
  */
@@ -41,7 +46,7 @@ function findDuplicateField(pages, fieldName) {
   const groups = new Map(); // normalized comparison value -> { value, urls, seenKeys }
 
   for (const page of pages) {
-    if (page.skipped || page.isExternal || page.error) continue;
+    if (page.skipped || page.isExternal || page.error || page.indexable === false) continue;
     const raw = page[fieldName];
     if (!raw || typeof raw !== 'string') continue;
     const normalized = raw.trim().replace(/\s+/g, ' ');
