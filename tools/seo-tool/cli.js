@@ -85,7 +85,7 @@ function printPageSummary(page) {
   console.log(`  Status: ${page.status}${page.redirectChain && page.redirectChain.length ? ` (via ${page.redirectChain.length} redirect${page.redirectChain.length > 1 ? 's' : ''})` : ''}`);
   console.log(`  Title: ${page.title || '(missing)'}`);
   console.log(`  Meta description: ${page.metaDescription || '(missing)'}`);
-  console.log(`  Canonical: ${page.canonical || '(missing)'}`);
+  console.log(`  Canonical: ${page.canonical || '(missing)'}${page.multipleCanonicals ? ` (${page.canonicalCount} canonical tags declared — only the first is used; see canonicalRawHrefs in --json for all of them)` : ''}`);
   console.log(`  H1 count: ${page.h1Count ?? '?'}  H2 count: ${page.h2Count ?? '?'}`);
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
   console.log(`  Indexable signal: ${page.indexable === undefined ? '?' : page.indexable}${page.indexabilityReasons && page.indexabilityReasons.length ? ` (${page.indexabilityReasons.join('; ')})` : ''}`);

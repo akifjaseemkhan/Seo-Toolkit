@@ -9,11 +9,16 @@ All notable changes to this project are documented in this file. Dates are in `Y
 - `CHANGELOG.md` (this file).
 - `CONTRIBUTING.md` — contribution guidelines specific to this repository's constraints (zero-breakage philosophy, zero dependencies, agent-agnostic design, test requirements).
 - Private-network (SSRF) protection in `tools/seo-tool`: every fetch — the initial requested URL and every redirect hop — is refused by default when its host is a literal RFC1918, link-local/cloud-metadata (`169.254.0.0/16`, including `169.254.169.254`), or equivalent IPv6 (`fe80::/10`, `fc00::/7`, `::`, and IPv4-mapped forms of any of the above) address. `localhost`, `127.0.0.0/8`, and `::1` remain allowed by design, since auditing a local dev server is a documented use case. `--allow-private-network` (`allowPrivateNetwork` option) is a new, explicit, opt-in flag on every fetching command (`crawl`, `page`, `sitemap`, `robots`, `links`, `audit`) for deliberately auditing an internal/LAN target. See `lib/url-utils.js`'s `isPrivateNetworkTarget` and the "Private-network protection" section of `docs/tooling.md`.
+- `canonicalCount`, `multipleCanonicals`, and `canonicalRawHrefs` fields on every `page`/`crawl` result: a page can declare more than one `<link rel="canonical">`, which real search engines only honor one of — these surface that ambiguity (with every declared href, unresolved, as evidence) instead of silently showing only the first as if there were no conflict. The human-readable `page` summary flags it on the `Canonical:` line too. See the "canonical-resolution note" in `docs/tooling.md`.
+
+### Fixed
+- `canonical` is now always resolved to an absolute URL against the page's real, post-redirect URL, the same as `internalLinks`/`externalLinks`/`images` already were. Previously a relative or root-relative canonical href (e.g. `/widgets`) was returned exactly as written in the markup, unresolved — usable for a same-page string comparison but not as an actual URL.
 
 ### Changed
 - `README.md`: removed two "Recommended improvements for a future version" bullets that had already been implemented (a local crawler/link-checker and a machine-readable JSON findings format both shipped as `tools/seo-tool`); added a License section and a Testing section; added a version/changelog pointer; added a note distinguishing the skill's content-change safety model from the tool's own network-safety boundary.
 - `docs/tooling.md`: updated the Testing section to mention the CLI, `fetch-utils`, and `report.js` test files and sitemap-index recursion coverage added after this section was originally written; documented the new private-network protection and `--allow-private-network` flag.
 - `docs/safety.md`: added a section distinguishing this document's content-change risk model (Category A/B/C/D) from the toolkit's separate, unrelated network-safety boundary.
+- `docs/tooling.md`: added a "canonical-resolution note" documenting absolute resolution and multiple-declaration handling, and updated the JSON schema example and Testing section to match.
 
 ## [1.0.0] — 2026-08-27
 

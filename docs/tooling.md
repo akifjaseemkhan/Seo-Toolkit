@@ -86,7 +86,7 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 
 ## What each command collects
 
-- **`page`** — one URL's status, redirect chain, content type, title, meta description, canonical, viewport, `lang`, robots meta + `X-Robots-Tag` directives, an indexability signal (see below), H1/H2 counts and text, Open Graph fields, Twitter card fields, JSON-LD blocks (parsed, with parse errors captured rather than thrown), internal/external links (with anchor text and `nofollow`), and images (`src`, `alt` presence vs. empty alt).
+- **`page`** — one URL's status, redirect chain, content type, title, meta description, canonical (resolved to an absolute URL against the page's real, post-redirect URL — see the canonical note below), viewport, `lang`, robots meta + `X-Robots-Tag` directives, an indexability signal (see below), H1/H2 counts and text, Open Graph fields, Twitter card fields, JSON-LD blocks (parsed, with parse errors captured rather than thrown), internal/external links (with anchor text and `nofollow`), and images (`src`, `alt` presence vs. empty alt).
 - **`crawl`** — the same facts for every same-origin page reached by breadth-first traversal from the start URL, plus each page's crawl depth and which pages linked to it (within this crawl).
 - **`sitemap`** — parses `<urlset>` or `<sitemapindex>`. A `<sitemapindex>` is recursed into by default (bounded by `--max-sitemaps`, default 50, and `--max-sitemap-depth`, default 5) so `entryCount`/`urls`/`issues` always reflect the full aggregated set of real page URLs across every child sitemap, never just the list of child filenames — pass `--no-recurse` to see only the root document. Recursion is same-origin, deduplicates repeated/cyclical child sitemap references (each fetched at most once), and records every file it touched in `sitemapsProcessed` plus anything it declined to follow (cross-origin, duplicate, or bound-exceeded) in `skipped`; a `truncated: true` flag means the bounds were hit before the whole tree was covered. Validation flags missing/malformed `loc` values, exact and trailing-slash-variant duplicates, and paths that heuristically look non-public (admin/account/cart-like segments) — a heuristic flag for a human to verify, not a claim of certainty. `--check-status` optionally spot-checks the first N aggregated URLs' real HTTP status.
 - **`robots`** — parses groups/rules/`Sitemap:` declarations, and (with `--important`) flags whether specific paths are blocked for a given user-agent, using longest-match-wins evaluation with `*` wildcards and `$` end-anchors.
@@ -99,6 +99,12 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 A crawl that starts from one page and only follows discovered links can, by construction, never find a page that truly has zero incoming links — if the crawler reached it, something linked to it. Real orphan detection needs an independent list of URLs that *should* exist to cross-reference against what the crawl actually found linked — that's what `audit` does by comparing the sitemap's URLs against the crawl's discovered link targets. `crawl`/`links` alone will typically report zero orphan candidates, which is expected and documented, not a bug — prefer `audit` when orphan detection specifically matters.
 
 This cross-reference is sitemap-index-aware: `audit` resolves the full sitemap tree (see the `sitemap` command above) before comparing, so a site whose `/sitemap.xml` is actually a `<sitemapindex>` still gets real orphan detection instead of silently comparing against an empty list.
+
+## The canonical-resolution note
+
+The `canonical` field on a page is always resolved to an absolute URL, against that page's real, post-redirect URL — a relative (`widgets`), root-relative (`/widgets`), or already-absolute canonical href are all handled the same way, and a query string or fragment present in the href is preserved exactly as declared, not stripped. A canonical tag with no `href`, an empty `href`, or a non-navigable scheme (e.g. `javascript:`) resolves to `canonical: null` rather than throwing or silently keeping a broken value.
+
+A page can declare more than one `<link rel="canonical">` — real search engines only honor one canonical signal per page, so this is a genuine, common SEO problem, not just noise. `page`/`crawl`'s facts always preserve the *first* declaration (in document order) as `canonical`, matching this tool's existing "first match wins" convention elsewhere — but `canonicalCount` and `multipleCanonicals` surface whether more than one was actually declared, and `canonicalRawHrefs` lists every declaration's href exactly as written in the markup (unresolved), in document order, so you can see what every one of them actually said rather than just the one that won. The human-readable `page` summary flags this on the `Canonical:` line instead of silently showing only the first as if there were no ambiguity.
 
 ## Known limitations (read before treating an absence as proof)
 
@@ -129,7 +135,9 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
       "requestedUrl": "...", "finalUrl": "...", "status": 200,
       "redirectChain": [ { "url": "...", "status": 301, "location": "..." } ],
       "contentType": "text/html; charset=utf-8", "isHtml": true,
-      "title": "...", "metaDescription": "...", "canonical": "...",
+      "title": "...", "metaDescription": "...",
+      "canonical": "...",                 // resolved to an absolute URL; null if missing/malformed — see the canonical-resolution note above
+      "canonicalCount": 1, "multipleCanonicals": false, "canonicalRawHrefs": ["..."], // every declared href, unresolved, in document order
       "viewport": "...", "lang": "en",
       "robotsMetaDirectives": ["noindex"], "xRobotsTagDirectives": [],
       "indexable": false, "indexabilityReasons": ["noindex directive present ..."],
@@ -169,7 +177,8 @@ Keep this schema in sync with `tools/seo-tool/lib/report.js` when either changes
 
 `tools/seo-tool` has its own test suite (`node --test test/*.test.js` from within `tools/seo-tool/`, or `npm test`), covering:
 
-- Every HTML extractor (title, description, canonical, robots meta, H1/H2 counting, JSON-LD, internal/external link classification) and URL normalization.
+- Every HTML extractor (title, description, robots meta, H1/H2 counting, JSON-LD, internal/external link classification) and URL normalization.
+- Canonical extraction specifically: absolute/relative/root-relative href resolution, query-string/fragment preservation, multiple-declaration detection (first-wins plus the full raw-href evidence list), missing/empty/no-href/non-navigable-scheme cases, and — through a real crawl against a local fixture server — a relative canonical on a redirected page resolving against its real post-redirect URL, not the originally-requested one.
 - `robots.txt` parsing and rule evaluation, including wildcard/end-anchor patterns and longest-match-wins.
 - Sitemap parsing and validation, and `<sitemapindex>` tree resolution specifically — recursion into nested indexes, duplicate/cycle protection, same-origin enforcement, and bounded truncation (`maxSitemaps`/`maxDepth`).
 - Link-graph orphan/broken-link detection.

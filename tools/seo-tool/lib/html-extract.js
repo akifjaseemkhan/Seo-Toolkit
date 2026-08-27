@@ -131,10 +131,48 @@ export function extractViewport(metaTags) {
   return tag ? tag.content || null : null;
 }
 
-export function extractCanonical(html) {
+/**
+ * Extract every <link rel="canonical"> declaration on the page. Real search
+ * engines only honor one canonical signal per page — a page with more than
+ * one declaration creates real ambiguity about which target actually wins,
+ * so that's surfaced as evidence here rather than silently discarded.
+ *
+ * Returns:
+ *   canonical          - the FIRST declaration's href (in document order),
+ *                         resolved to an absolute URL against `pageUrl` —
+ *                         null if there's no canonical link, the tag has no
+ *                         (or an empty) href, or the href doesn't resolve to
+ *                         a navigable URL (see toAbsoluteUrl). A relative,
+ *                         root-relative, or already-absolute href are all
+ *                         handled the same way; a query string or fragment
+ *                         present in the href is preserved as declared, not
+ *                         stripped.
+ *   canonicalRawHrefs  - every declaration's href, in document order, EXACTLY
+ *                         as written in the markup (unresolved) — evidence
+ *                         for canonicalCount/multipleCanonicals below, and
+ *                         for seeing what a malformed first href actually
+ *                         said even though `canonical` came back null. A
+ *                         tag with no href attribute at all is recorded as
+ *                         `null` in this list (not `undefined`), so its
+ *                         position/count is still visible.
+ *   canonicalCount     - total number of <link rel="canonical"> tags found.
+ *   multipleCanonicals - true when canonicalCount > 1.
+ *
+ * `pageUrl` should be the page's actual final URL (post-redirect) — see the
+ * same convention already used by extractLinks/extractImages below.
+ */
+export function extractCanonical(html, pageUrl) {
   const links = findVoidTags(html, 'link');
-  const canonical = links.find((l) => (l.rel || '').toLowerCase().split(/\s+/).includes('canonical'));
-  return canonical ? canonical.href || null : null;
+  const canonicalLinks = links.filter((l) => (l.rel || '').toLowerCase().split(/\s+/).includes('canonical'));
+  const canonicalRawHrefs = canonicalLinks.map((l) => (l.href !== undefined ? l.href : null));
+  const firstRaw = canonicalRawHrefs.length > 0 ? canonicalRawHrefs[0] : null;
+  const canonical = firstRaw ? toAbsoluteUrl(firstRaw, pageUrl) : null;
+  return {
+    canonical,
+    canonicalRawHrefs,
+    canonicalCount: canonicalLinks.length,
+    multipleCanonicals: canonicalLinks.length > 1,
+  };
 }
 
 export function extractLangAttribute(html) {
@@ -279,7 +317,7 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
   const metaTags = extractMetaTags(html);
   const robotsMetaDirectives = extractRobotsMeta(metaTags);
   const xRobotsTagDirectives = extractXRobotsTag(xRobotsTagHeader);
-  const canonical = extractCanonical(html);
+  const { canonical, canonicalRawHrefs, canonicalCount, multipleCanonicals } = extractCanonical(html, pageUrl);
   const headings = extractHeadings(html);
   const links = extractLinks(html, pageUrl);
   const images = extractImages(html, pageUrl);
@@ -295,6 +333,9 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     title: extractTitle(html),
     metaDescription: extractMetaDescription(metaTags),
     canonical,
+    canonicalRawHrefs,
+    canonicalCount,
+    multipleCanonicals,
     viewport: extractViewport(metaTags),
     lang: extractLangAttribute(html),
     robotsMetaDirectives,

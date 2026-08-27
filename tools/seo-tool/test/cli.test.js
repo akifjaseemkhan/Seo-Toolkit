@@ -74,6 +74,13 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/multi-canonical') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>Multi Canonical</title><link rel="canonical" href="/canonical-target"><link rel="canonical" href="https://elsewhere.example.com/other"></head><body>x</body></html>'
+      );
+      return;
+    }
     res.writeHead(404);
     res.end('not found');
   });
@@ -209,6 +216,35 @@ test('CLI page --json prints a single valid JSON report to stdout', async () => 
     assert.equal(report.meta.command, 'page');
     assert.equal(report.pages[0].status, 200);
     assert.equal(report.pages[0].title, 'CLI Fixture Home');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json surfaces the resolved canonical plus multiple-canonical evidence end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/multi-canonical`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.canonical, `${baseUrl}/canonical-target`, 'the first canonical must be resolved to an absolute URL against the page URL');
+    assert.equal(page.canonicalCount, 2);
+    assert.equal(page.multipleCanonicals, true);
+    assert.deepEqual(page.canonicalRawHrefs, ['/canonical-target', 'https://elsewhere.example.com/other']);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output flags multiple declared canonicals instead of silently showing only the first', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/multi-canonical`]);
+    assert.equal(code, 0);
+    assert.ok(
+      stdout.includes(`Canonical: ${baseUrl}/canonical-target (2 canonical tags declared`),
+      `expected the Canonical line to flag multiple declarations, got:\n${stdout}`
+    );
   } finally {
     server.close();
   }

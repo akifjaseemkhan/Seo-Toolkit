@@ -47,9 +47,94 @@ test('extractRobotsMeta returns empty array when absent', () => {
 });
 
 test('extractCanonical finds link rel=canonical with any attribute order or quote style', () => {
-  assert.equal(extractCanonical('<link rel="canonical" href="https://example.com/page">'), 'https://example.com/page');
-  assert.equal(extractCanonical("<link href='https://example.com/x' rel='canonical'>"), 'https://example.com/x');
-  assert.equal(extractCanonical('<link rel="stylesheet" href="/style.css">'), null);
+  const base = 'https://example.com/';
+  assert.equal(extractCanonical('<link rel="canonical" href="https://example.com/page">', base).canonical, 'https://example.com/page');
+  assert.equal(extractCanonical("<link href='https://example.com/x' rel='canonical'>", base).canonical, 'https://example.com/x');
+  assert.equal(extractCanonical('<link rel="stylesheet" href="/style.css">', base).canonical, null);
+});
+
+test('extractCanonical resolves an absolute canonical href unchanged', () => {
+  const result = extractCanonical('<link rel="canonical" href="https://example.com/canonical-page">', 'https://example.com/some/other/page');
+  assert.equal(result.canonical, 'https://example.com/canonical-page');
+  assert.equal(result.canonicalCount, 1);
+  assert.equal(result.multipleCanonicals, false);
+  assert.deepEqual(result.canonicalRawHrefs, ['https://example.com/canonical-page']);
+});
+
+test('extractCanonical resolves a path-relative canonical href against the page URL', () => {
+  const result = extractCanonical('<link rel="canonical" href="widgets">', 'https://example.com/shop/index.html');
+  assert.equal(result.canonical, 'https://example.com/shop/widgets');
+  assert.deepEqual(result.canonicalRawHrefs, ['widgets']);
+});
+
+test('extractCanonical resolves a root-relative canonical href against the page URL', () => {
+  const result = extractCanonical('<link rel="canonical" href="/widgets">', 'https://example.com/shop/deeply/nested/page');
+  assert.equal(result.canonical, 'https://example.com/widgets');
+});
+
+test('extractCanonical preserves a canonical href\'s own query string and fragment (does not strip them)', () => {
+  const result = extractCanonical('<link rel="canonical" href="/page?utm_source=x#section">', 'https://example.com/');
+  assert.equal(result.canonical, 'https://example.com/page?utm_source=x#section');
+});
+
+test('extractCanonical detects multiple canonical declarations, preserves the first, and reports all raw hrefs as evidence', () => {
+  const html = `
+    <link rel="canonical" href="/first">
+    <link rel="canonical" href="/second">
+    <link rel="canonical" href="https://elsewhere.example.com/third">
+  `;
+  const result = extractCanonical(html, 'https://example.com/');
+  assert.equal(result.canonical, 'https://example.com/first', 'the first declaration in document order wins, per existing project convention');
+  assert.equal(result.canonicalCount, 3);
+  assert.equal(result.multipleCanonicals, true);
+  assert.deepEqual(result.canonicalRawHrefs, ['/first', '/second', 'https://elsewhere.example.com/third']);
+});
+
+test('extractCanonical returns a non-multiple result when there is exactly one canonical', () => {
+  const result = extractCanonical('<link rel="canonical" href="/only">', 'https://example.com/');
+  assert.equal(result.canonicalCount, 1);
+  assert.equal(result.multipleCanonicals, false);
+});
+
+test('extractCanonical handles a missing canonical tag entirely', () => {
+  const result = extractCanonical('<html><head><title>No canonical here</title></head></html>', 'https://example.com/');
+  assert.equal(result.canonical, null);
+  assert.equal(result.canonicalCount, 0);
+  assert.equal(result.multipleCanonicals, false);
+  assert.deepEqual(result.canonicalRawHrefs, []);
+});
+
+test('extractCanonical treats a canonical link with no href attribute as malformed, not a crash', () => {
+  const result = extractCanonical('<link rel="canonical">', 'https://example.com/');
+  assert.equal(result.canonical, null);
+  assert.equal(result.canonicalCount, 1, 'the tag itself still counts as a declaration, even without a usable href');
+  assert.deepEqual(result.canonicalRawHrefs, [null]);
+});
+
+test('extractCanonical treats an empty-string canonical href as malformed, not a crash', () => {
+  const result = extractCanonical('<link rel="canonical" href="">', 'https://example.com/');
+  assert.equal(result.canonical, null);
+  assert.equal(result.canonicalCount, 1);
+  assert.deepEqual(result.canonicalRawHrefs, ['']);
+});
+
+test('extractCanonical treats a non-navigable canonical scheme (javascript:) as malformed, not a crash', () => {
+  const result = extractCanonical('<link rel="canonical" href="javascript:void(0)">', 'https://example.com/');
+  assert.equal(result.canonical, null);
+  assert.equal(result.canonicalCount, 1);
+  assert.deepEqual(result.canonicalRawHrefs, ['javascript:void(0)']);
+});
+
+test('extractCanonical never throws when pageUrl itself is missing/invalid, even for a relative href', () => {
+  assert.doesNotThrow(() => extractCanonical('<link rel="canonical" href="/relative">', undefined));
+  const result = extractCanonical('<link rel="canonical" href="/relative">', undefined);
+  assert.equal(result.canonical, null, 'cannot resolve a relative href with no usable base — malformed, not a crash');
+  assert.deepEqual(result.canonicalRawHrefs, ['/relative']);
+});
+
+test('extractCanonical is case-insensitive and whitespace-tolerant on rel="canonical" among other rel values', () => {
+  const result = extractCanonical('<link rel="alternate canonical" href="/x">', 'https://example.com/');
+  assert.equal(result.canonical, 'https://example.com/x');
 });
 
 test('extractViewport reads meta viewport content', () => {
@@ -193,10 +278,35 @@ test('extractSeoFacts assembles a complete facts object from a realistic page', 
   assert.equal(facts.title, 'Widgets — Acme');
   assert.equal(facts.metaDescription, 'Buy the best widgets online.');
   assert.equal(facts.canonical, 'https://example.com/widgets');
+  assert.equal(facts.canonicalCount, 1);
+  assert.equal(facts.multipleCanonicals, false);
+  assert.deepEqual(facts.canonicalRawHrefs, ['https://example.com/widgets']);
   assert.equal(facts.h1Count, 1);
   assert.equal(facts.indexable, true);
   assert.equal(facts.jsonLd.length, 1);
   assert.equal(facts.internalLinks.length, 1);
   assert.equal(facts.externalLinks.length, 1);
   assert.equal(facts.imagesMissingAlt, 0);
+});
+
+test('extractSeoFacts resolves a relative canonical against the real page URL and surfaces multiple-canonical evidence', () => {
+  const html = `<!doctype html>
+<html><head>
+  <title>Duplicated canonicals</title>
+  <link rel="canonical" href="/canonical-target">
+  <link rel="canonical" href="/another-declared-target">
+</head><body></body></html>`;
+  const facts = extractSeoFacts(html, 'https://example.com/some/deep/page', { statusCode: 200 });
+  assert.equal(facts.canonical, 'https://example.com/canonical-target', 'relative href resolved against the real page URL, first declaration wins');
+  assert.equal(facts.canonicalCount, 2);
+  assert.equal(facts.multipleCanonicals, true);
+  assert.deepEqual(facts.canonicalRawHrefs, ['/canonical-target', '/another-declared-target']);
+});
+
+test('extractSeoFacts reports a missing canonical as null with zero count, not a crash', () => {
+  const facts = extractSeoFacts('<html><head><title>No canonical</title></head></html>', 'https://example.com/page', { statusCode: 200 });
+  assert.equal(facts.canonical, null);
+  assert.equal(facts.canonicalCount, 0);
+  assert.equal(facts.multipleCanonicals, false);
+  assert.deepEqual(facts.canonicalRawHrefs, []);
 });

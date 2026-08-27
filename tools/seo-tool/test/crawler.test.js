@@ -18,7 +18,7 @@ const ROUTES = {
   </body></html>`,
   '/a': `<html><head><title>Page A</title></head><body><a href="/c">C</a><a href="/">Home</a></body></html>`,
   '/c': `<html><head><title>Page C</title></head><body>Leaf page.</body></html>`,
-  '/b-new': `<html><head><title>Page B New</title></head><body>Landed after redirect.</body></html>`,
+  '/b-new': `<html><head><title>Page B New</title><link rel="canonical" href="/b-new"></head><body>Landed after redirect.</body></html>`,
   '/blocked': `<html><head><title>Should not be fetched</title></head><body></body></html>`,
   '/robots.txt': `User-agent: *\nDisallow: /blocked\n`,
 };
@@ -82,6 +82,10 @@ test('crawl() discovers pages, follows redirects, records 404s, respects robots.
     assert.equal(b.finalUrl, byPath('/b-new'));
     assert.equal(b.redirectChain.length, 1);
     assert.equal(b.redirectChain[0].status, 302);
+    // The landing page's canonical is root-relative ("/b-new") — it must
+    // resolve against the page's real, post-redirect final URL, not the
+    // originally-requested /b.
+    assert.equal(b.canonical, byPath('/b-new'), 'a relative canonical on a redirected page must resolve against the final URL, not the requested one');
 
     const missing = findPage(byPath('/missing'));
     assert.ok(missing, '404 page should be recorded, not dropped');
