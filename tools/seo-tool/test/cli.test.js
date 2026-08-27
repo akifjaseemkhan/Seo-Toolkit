@@ -349,10 +349,18 @@ test('CLI page --json against a private-network target reports the blocked_priva
 });
 
 test('CLI page --allow-private-network explicitly lifts the block (the request is actually attempted, not synchronously refused)', async () => {
-  const { stdout, code } = await runCli(['page', 'http://169.254.169.254/latest/meta-data/', '--allow-private-network', '--json']);
-  assert.equal(code, 1, 'nothing real listens at this address in the test environment, so it still ultimately fails');
+  const { stdout } = await runCli(['page', 'http://169.254.169.254/latest/meta-data/', '--allow-private-network', '--json']);
   const report = JSON.parse(stdout);
-  assert.notEqual(report.pages[0].error.type, 'blocked_private_network', 'the failure must now come from a real network attempt, not our guard');
+  // Whether this address is actually reachable is genuinely
+  // environment-dependent, not just "unreachable everywhere": it's
+  // unreachable on a typical dev machine, but 169.254.169.254 is the real,
+  // live cloud-metadata endpoint on many CI providers — including GitHub
+  // Actions, whose hosted runners are themselves Azure VMs serving their
+  // own Instance Metadata Service at this exact address. So this must not
+  // assert a specific exit code or a real network-layer failure — what it
+  // proves, on any environment, is only that our own synchronous guard did
+  // not refuse the request before a real attempt was made.
+  assert.notEqual(report.pages[0].error && report.pages[0].error.type, 'blocked_private_network');
 });
 
 test('CLI still works normally against "localhost" (not just 127.0.0.1), confirming the default protection never regresses the documented local-dev-server use case', async () => {

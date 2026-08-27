@@ -391,15 +391,19 @@ test('fetchFollowingRedirects blocks at whichever hop first becomes private, eve
 
 test('allowPrivateNetwork:true deliberately lifts the block, as an explicit opt-in', async () => {
   const result = await fetchOnce('http://169.254.169.254/latest/meta-data/', { timeoutMs: 3000, allowPrivateNetwork: true });
-  // Nothing real listens at this address in the test environment, so this
-  // must still fail overall — the point is *how* it fails. Whether the
-  // underlying network stack rejects it quickly (e.g. no route to host) or
-  // slowly (timeout) is environment-dependent and not what's under test
-  // here; what matters, deterministically, is that it is no longer rejected
-  // by *our* guard before ever reaching the network.
-  assert.equal(result.ok, false);
-  assert.notEqual(result.error.type, 'blocked_private_network');
-  assert.ok(['network', 'timeout', 'unknown'].includes(result.error.type), `expected a real network-layer failure type, got "${result.error.type}"`);
+  // Whether this specific address is actually reachable is genuinely
+  // environment-dependent, not just "unreachable everywhere": it's
+  // unreachable on a typical dev machine, but 169.254.169.254 is the real,
+  // live cloud-metadata endpoint on many CI providers — including GitHub
+  // Actions, whose hosted runners are themselves Azure VMs, and Azure
+  // serves its own Instance Metadata Service at this exact address (a
+  // request without the required `Metadata: true` header gets a real
+  // 400 response from it, not a connection failure). So this must not
+  // assert that the request *fails* — what it proves, on any environment,
+  // is only that our own synchronous guard did not refuse it before a real
+  // attempt was made; whether that attempt then succeeds or fails at the
+  // network layer is environment-dependent and not this test's concern.
+  assert.notEqual(result.error && result.error.type, 'blocked_private_network');
 });
 
 test('allowPrivateNetwork:true on fetchFollowingRedirects also applies per-hop, not just to the initial URL', async () => {
