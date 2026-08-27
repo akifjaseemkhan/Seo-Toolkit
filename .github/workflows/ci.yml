@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # tools/seo-tool has zero runtime dependencies (see its package.json),
+      # so there is nothing to install — `npm test` runs directly against
+      # Node's built-in test runner. This is the same command documented in
+      # docs/tooling.md and run locally during development.
+      - name: Run test suite (tools/seo-tool)
+        working-directory: tools/seo-tool
+        run: npm test

@@ -1,5 +1,7 @@
 # SEO Engineering Skill
 
+**Version:** 1.0.0 · [Changelog](CHANGELOG.md) · [MIT License](LICENSE)
+
 A reusable, framework-agnostic, agent-agnostic SEO engineering system. It's plain Markdown instructions plus a small zero-dependency CLI — no proprietary format, no lock-in to one AI product. Point any AI coding agent (Claude Code, or any other agent capable of reading local files and following instructions) at [`SKILL.md`](SKILL.md) and it inspects the target project's actual stack, architecture, and existing SEO implementation before doing any work — instead of applying one fixed methodology or requiring you to re-explain SEO fundamentals every time.
 
 This is not a website. It contains no business-specific content, no fixture data, and no assumptions about any particular company, industry, or brand. It is the SEO system itself.
@@ -218,6 +220,21 @@ See [docs/installation.md](docs/installation.md). In short: copy this folder int
 
 See [docs/usage.md](docs/usage.md). Just ask for SEO work in plain language ("audit our SEO," "why isn't this page indexing," "what content should we write next") or use the `/seo *` commands if your agent supports named/slash commands. The first action is always inspecting the actual project — you never need to explain your site or your SEO priorities from scratch.
 
+## Testing
+
+`tools/seo-tool` has an automated test suite covering its extractors (title, description, canonical, robots meta, headings, JSON-LD), URL normalization, `robots.txt` parsing and rule evaluation, sitemap parsing and validation (including `<sitemapindex>` recursion, loop protection, and same-origin enforcement), link-graph orphan/broken-link detection, a full crawl against a local HTTP fixture server, the CLI entry point itself (command dispatch, argument parsing, exit codes, output modes), and the JSON report schema. Run it with:
+
+```bash
+cd tools/seo-tool
+npm test
+```
+
+This runs Node's built-in test runner (`node --test test/*.test.js`) — no dependencies to install first. [GitHub Actions CI](.github/workflows/ci.yml) runs the same command on every push and pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for the expectation that behavior changes come with test changes.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Limitations (be aware of these)
 
 - The full list of SEO work that requires external platforms, external data, or business input — Search Console, analytics, keyword/backlink tools, competitor SERP data, Google Business Profile, and business/infrastructure facts — is documented in [External SEO Work](#external-seo-work) above. This repository never fabricates a substitute for any of it.
@@ -225,7 +242,5 @@ See [docs/usage.md](docs/usage.md). Just ask for SEO work in plain language ("au
 
 ## Recommended improvements for a future version
 
-- A lightweight local crawler/link-checker utility script (bundled, not a live external service) to make `workflows/technical-seo.md` and `checklists/technical-checklist.md` audits less manual for larger sites.
 - Direct integration hooks for Search Console/analytics data import, if a connected tool becomes reliably available, to make `workflows/search-console.md` less dependent on manual data hand-off.
-- A machine-readable findings format (e.g., structured JSON alongside the Markdown reports) so audit output can feed a ticketing system or dashboard directly.
 - Expanded `frameworks/` coverage for additional meta-frameworks (SvelteKit, Remix, Nuxt-specific detail) as they see wider real-world adoption, following the same template as the existing guides.

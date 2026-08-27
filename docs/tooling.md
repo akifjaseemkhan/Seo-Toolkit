@@ -44,7 +44,7 @@ Don't use it when:
 
 ## Safety guarantee
 
-Every command in `tools/seo-tool` is read-only against everything it inspects: it only ever issues `GET`/`HEAD` HTTP requests (never a mutating method) and only ever reads local files. It never edits source files, never writes `robots.txt`/`sitemap.xml`/`package.json`, never modifies routes or configuration, and never touches Git state. The only thing it ever writes is its own JSON report, and only when you explicitly pass `--json=path`. This mirrors the audit/implement separation in `SKILL.md` — the toolkit only ever performs the "audit" half.
+Every command in `tools/seo-tool` is read-only against everything it inspects: it only ever issues `GET` HTTP requests (never a mutating method) and only ever reads local files. It never edits source files, never writes `robots.txt`/`sitemap.xml`/`package.json`, never modifies routes or configuration, and never touches Git state. The only thing it ever writes is its own JSON report, and only when you explicitly pass `--json=path`. This mirrors the audit/implement separation in `SKILL.md` — the toolkit only ever performs the "audit" half.
 
 It is also conservative by default: same-origin only (external links are recorded but not crawled unless `--include-external` is passed), a configurable page cap (`--max-pages`, default 50), a delay between request batches (`--delay`, default 250ms), bounded concurrency (`--concurrency`, default 2), a request timeout (`--timeout`), and it respects `robots.txt` by default (`--no-robots` to override, e.g. for auditing your own project's disallowed paths).
 
@@ -151,4 +151,15 @@ Keep this schema in sync with `tools/seo-tool/lib/report.js` when either changes
 
 ## Testing
 
-`tools/seo-tool` has its own test suite (`node --test test/*.test.js` from within `tools/seo-tool/`, or `npm test`), covering every extractor (title, description, canonical, robots meta, H1/H2 counting, JSON-LD, internal/external link classification), URL normalization, robots.txt parsing and rule evaluation (including wildcard/end-anchor patterns and longest-match-wins), sitemap parsing and validation, link-graph orphan/broken-link detection, a full crawl against a local HTTP fixture server (redirects, 404s, robots blocking, external-link handling), and project inspection against a fixture directory. Run it after any change to `tools/seo-tool`.
+`tools/seo-tool` has its own test suite (`node --test test/*.test.js` from within `tools/seo-tool/`, or `npm test`), covering:
+
+- Every HTML extractor (title, description, canonical, robots meta, H1/H2 counting, JSON-LD, internal/external link classification) and URL normalization.
+- `robots.txt` parsing and rule evaluation, including wildcard/end-anchor patterns and longest-match-wins.
+- Sitemap parsing and validation, and `<sitemapindex>` tree resolution specifically — recursion into nested indexes, duplicate/cycle protection, same-origin enforcement, and bounded truncation (`maxSitemaps`/`maxDepth`).
+- Link-graph orphan/broken-link detection.
+- A full crawl against a local HTTP fixture server (redirects, 404s, robots blocking, external-link handling), and project inspection against a fixture directory.
+- The CLI entry point itself (`cli.js`) as a real subprocess: command dispatch, argument parsing, exit codes, and both output modes (`--json`, `--json=path`).
+- `lib/fetch-utils.js` directly: timeouts, redirect chains, redirect loops, capped body reads, and network-error classification.
+- `lib/report.js`'s assembled JSON report shape against the schema documented above.
+
+Run it after any change to `tools/seo-tool`. GitHub Actions CI (`.github/workflows/ci.yml`) runs the same command on every push and pull request.
