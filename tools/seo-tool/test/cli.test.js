@@ -80,6 +80,47 @@ function startFixtureServer() {
   });
 }
 
+/**
+ * A loopback-only, dual-stack variant of the fixture server, used solely by
+ * the "localhost" CLI test below. Which address family Node resolves the
+ * literal "localhost" hostname to (and whether/how fast it falls back to
+ * the other one) is genuinely OS- and Node-version-dependent — that's
+ * exactly what broke this suite in CI (GitHub Actions ubuntu-latest + Node
+ * 20) while passing locally, since startFixtureServer() above only listens
+ * on the IPv4 loopback address. Listening on *both* loopback addresses
+ * explicitly (never a wildcard 0.0.0.0/:: bind) removes that dependency:
+ * whichever family gets picked, a real server answers immediately and
+ * deterministically, on every platform and Node version.
+ */
+function startDualStackFixtureServer() {
+  const handler = (req, res) => {
+    if (req.url === '/') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>CLI Fixture Home</title></head><body><a href="/about">About</a></body></html>');
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  };
+  const v4 = createServer(handler);
+  const v6 = createServer(handler);
+  return new Promise((resolveServers, rejectServers) => {
+    v6.once('error', rejectServers);
+    v4.listen(0, '127.0.0.1', () => {
+      const { port } = v4.address();
+      v6.listen(port, '::1', () => {
+        resolveServers({
+          baseUrl: `http://localhost:${port}`,
+          close: () => {
+            v4.close();
+            v6.close();
+          },
+        });
+      });
+    });
+  });
+}
+
 // ---------- parseArgs / num (pure, direct unit tests) ----------
 
 test('parseArgs separates positional arguments from --flags', () => {
@@ -340,14 +381,13 @@ test('CLI page --allow-private-network explicitly lifts the block (the request i
 });
 
 test('CLI still works normally against "localhost" (not just 127.0.0.1), confirming the default protection never regresses the documented local-dev-server use case', async () => {
-  const { server, baseUrl } = await startFixtureServer();
-  const localhostUrl = baseUrl.replace('127.0.0.1', 'localhost');
+  const { close, baseUrl } = await startDualStackFixtureServer();
   try {
-    const { stdout, code } = await runCli(['page', `${localhostUrl}/`]);
+    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
     assert.equal(code, 0);
     assert.match(stdout, /Status: 200/);
     assert.match(stdout, /Title: CLI Fixture Home/);
   } finally {
-    server.close();
+    close();
   }
 });
