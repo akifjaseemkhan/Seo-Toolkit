@@ -92,6 +92,19 @@ function startFixtureServer() {
       );
       return;
     }
+    // A small, self-contained subtree (not linked from / or /about) so this
+    // fixture can be crawled on its own without disturbing other tests'
+    // "Pages fetched: N" assertions against the main / -> /about tree.
+    if (req.url === '/dup-start') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Duplicate Start</title></head><body><a href="/dup-a">A</a><a href="/dup-b">B</a></body></html>');
+      return;
+    }
+    if (req.url === '/dup-a' || req.url === '/dup-b') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Same Title</title><meta name="description" content="Same description."></head><body>x</body></html>');
+      return;
+    }
     res.writeHead(404);
     res.end('not found');
   });
@@ -354,6 +367,37 @@ test('CLI crawl: normal successful execution against the fixture site', async ()
   }
 });
 
+test('CLI crawl --json surfaces duplicateTitles/duplicateMetaDescriptions end-to-end for real crawled pages', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['crawl', `${baseUrl}/dup-start`, '--max-pages=5', '--delay=0', '--json']);
+    assert.equal(code, 0);
+    const report = JSON.parse(stdout);
+    assert.equal(report.duplicateContent.duplicateTitles.length, 1);
+    assert.equal(report.duplicateContent.duplicateTitles[0].value, 'Same Title');
+    assert.deepEqual(report.duplicateContent.duplicateTitles[0].urls.sort(), [`${baseUrl}/dup-a`, `${baseUrl}/dup-b`]);
+    assert.equal(report.duplicateContent.duplicateMetaDescriptions.length, 1);
+    assert.equal(report.duplicateContent.duplicateMetaDescriptions[0].value, 'Same description.');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI crawl human-readable output shows duplicate title/description counts when present, nothing when absent', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const withDupes = await runCli(['crawl', `${baseUrl}/dup-start`, '--max-pages=5', '--delay=0']);
+    assert.equal(withDupes.code, 0);
+    assert.match(withDupes.stdout, /Duplicate titles: 1 group\(s\)\s+Duplicate meta descriptions: 1 group\(s\)/);
+
+    const withoutDupes = await runCli(['crawl', `${baseUrl}/`, '--max-pages=5', '--delay=0']);
+    assert.equal(withoutDupes.code, 0);
+    assert.ok(!withoutDupes.stdout.includes('Duplicate titles'), 'the / -> /about tree has no duplicate titles/descriptions, so the line should not appear');
+  } finally {
+    server.close();
+  }
+});
+
 test('CLI robots: dispatches correctly and reports the parsed groups', async () => {
   const { server, baseUrl } = await startFixtureServer();
   try {
@@ -406,6 +450,10 @@ test('CLI audit: normal successful execution combines crawl, sitemap, and robots
     assert.ok(report.robots.found);
     // /orphan is listed in the sitemap but never linked from the crawled pages.
     assert.ok(report.linkGraph.orphanCandidates.includes(`${baseUrl}/orphan`));
+    // Home and About have distinct titles/descriptions, so audit's
+    // duplicate-content section should be present but empty here — this
+    // confirms it's actually wired into `audit`, not just `crawl`.
+    assert.deepEqual(report.duplicateContent, { duplicateTitles: [], duplicateMetaDescriptions: [] });
   } finally {
     server.close();
   }

@@ -60,10 +60,11 @@ test('assembleReport pulls errors and warnings up from crawlResult into the top-
   assert.deepEqual(report.warnings, ['robots.txt not available']);
 });
 
-test('assembleReport passes sitemap, robots, linkGraph, and project sections through unchanged when supplied', () => {
+test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, and project sections through unchanged when supplied', () => {
   const sitemapResult = { source: 'https://example.com/sitemap.xml', type: 'urlset', urls: [], entryCount: 0, issues: [] };
   const robotsResult = { source: 'https://example.com/robots.txt', found: true, groups: [], sitemaps: [] };
   const linkGraph = { orphanCandidates: [], crawlDepthOutliers: [], brokenInternalLinks: [], unverifiedInternalLinks: [], note: 'x' };
+  const duplicateContent = { duplicateTitles: [], duplicateMetaDescriptions: [] };
   const projectFacts = { rootDir: '/tmp/project', packageJson: null };
 
   const report = assembleReport({
@@ -75,12 +76,14 @@ test('assembleReport passes sitemap, robots, linkGraph, and project sections thr
     sitemapResult,
     robotsResult,
     linkGraph,
+    duplicateContent,
     projectFacts,
   });
 
   assert.equal(report.sitemap, sitemapResult);
   assert.equal(report.robots, robotsResult);
   assert.equal(report.linkGraph, linkGraph);
+  assert.equal(report.duplicateContent, duplicateContent);
   assert.equal(report.project, projectFacts);
 });
 
@@ -96,6 +99,7 @@ test('assembleReport leaves crawl-derived sections undefined for a non-crawl com
   assert.equal(report.crawlSummary, undefined);
   assert.equal(report.robots, undefined);
   assert.equal(report.linkGraph, undefined);
+  assert.equal(report.duplicateContent, undefined);
   assert.equal(report.project, undefined);
   assert.ok(report.sitemap);
 });
@@ -108,6 +112,7 @@ test('assembleReport handles a fully empty/partial call (no result objects at al
   assert.equal(report.sitemap, undefined);
   assert.equal(report.robots, undefined);
   assert.equal(report.linkGraph, undefined);
+  assert.equal(report.duplicateContent, undefined);
   assert.equal(report.project, undefined);
 });
 
@@ -152,6 +157,7 @@ test('assembleReport JSON output never contains a literal "undefined" section fo
   assert.equal('crawlSummary' in serialized, false);
   assert.equal('sitemap' in serialized, false);
   assert.equal('linkGraph' in serialized, false);
+  assert.equal('duplicateContent' in serialized, false);
   assert.equal('project' in serialized, false);
   assert.ok('robots' in serialized);
 });

@@ -16,6 +16,7 @@ import { fetchFollowingRedirects, DEFAULT_TIMEOUT_MS } from './lib/fetch-utils.j
 import { extractSeoFacts } from './lib/html-extract.js';
 import { crawl, fetchRobotsForOrigin } from './lib/crawler.js';
 import { buildLinkGraph } from './lib/link-graph.js';
+import { buildDuplicateContentReport } from './lib/duplicate-content.js';
 import { parseRobotsTxt, checkImportantPathConflicts, ROBOTS_NOT_SECURITY_NOTE } from './lib/robots.js';
 import { parseSitemap, resolveSitemapTree } from './lib/sitemap.js';
 import { inspectProject } from './lib/project-inspect.js';
@@ -123,6 +124,13 @@ function printCrawlSummary(report) {
     console.log(`  Potential orphan pages: ${report.linkGraph.orphanCandidates.length}`);
     console.log(`  Crawl-depth outliers: ${report.linkGraph.crawlDepthOutliers.length}`);
     console.log(`  Broken internal links found: ${report.linkGraph.brokenInternalLinks.length}`);
+  }
+  if (report.duplicateContent) {
+    const dupTitles = report.duplicateContent.duplicateTitles.length;
+    const dupDescriptions = report.duplicateContent.duplicateMetaDescriptions.length;
+    if (dupTitles || dupDescriptions) {
+      console.log(`  Duplicate titles: ${dupTitles} group(s)  Duplicate meta descriptions: ${dupDescriptions} group(s)`);
+    }
   }
   console.log(`\nRun with --json for full machine-readable output.`);
 }
@@ -250,7 +258,8 @@ async function cmdCrawl(url, flags, commandName = 'crawl') {
   };
   const crawlResult = await crawl(url, options);
   const linkGraph = buildLinkGraph(crawlResult.pages, url);
-  const report = assembleReport({ command: commandName, target: url, options, startedAt, crawlResult, linkGraph });
+  const duplicateContent = buildDuplicateContentReport(crawlResult.pages);
+  const report = assembleReport({ command: commandName, target: url, options, startedAt, crawlResult, linkGraph, duplicateContent });
   await emit(report, flags, () => printCrawlSummary(report));
   if (crawlResult.pages.length === 0 && crawlResult.errors.length > 0) process.exitCode = 1;
 }
@@ -384,8 +393,9 @@ async function cmdAudit(url, flags) {
   // empty list and orphan detection degraded with no warning).
   const knownUrls = (sitemapResult.type === 'urlset' || sitemapResult.type === 'sitemapindex') ? sitemapResult.urls.map((u) => u.loc).filter(Boolean) : [];
   const linkGraph = buildLinkGraph(crawlResult.pages, url, { knownUrls });
+  const duplicateContent = buildDuplicateContentReport(crawlResult.pages);
 
-  const report = assembleReport({ command: 'audit', target: url, options, startedAt, crawlResult, linkGraph, sitemapResult, robotsResult });
+  const report = assembleReport({ command: 'audit', target: url, options, startedAt, crawlResult, linkGraph, duplicateContent, sitemapResult, robotsResult });
   await emit(report, flags, () => printAuditSummary(report));
   if (crawlResult.pages.length === 0 && crawlResult.errors.length > 0) process.exitCode = 1;
 }
