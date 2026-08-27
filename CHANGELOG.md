@@ -8,8 +8,6 @@ All notable changes to this project are documented in this file. Dates are in `Y
 - `.github/workflows/ci.yml` — GitHub Actions CI that runs the test suite on every push and pull request.
 - `CHANGELOG.md` (this file).
 - `CONTRIBUTING.md` — contribution guidelines specific to this repository's constraints (zero-breakage philosophy, zero dependencies, agent-agnostic design, test requirements).
-
-### Added
 - Private-network (SSRF) protection in `tools/seo-tool`: every fetch — the initial requested URL and every redirect hop — is refused by default when its host is a literal RFC1918, link-local/cloud-metadata (`169.254.0.0/16`, including `169.254.169.254`), or equivalent IPv6 (`fe80::/10`, `fc00::/7`, `::`, and IPv4-mapped forms of any of the above) address. `localhost`, `127.0.0.0/8`, and `::1` remain allowed by design, since auditing a local dev server is a documented use case. `--allow-private-network` (`allowPrivateNetwork` option) is a new, explicit, opt-in flag on every fetching command (`crawl`, `page`, `sitemap`, `robots`, `links`, `audit`) for deliberately auditing an internal/LAN target. See `lib/url-utils.js`'s `isPrivateNetworkTarget` and the "Private-network protection" section of `docs/tooling.md`.
 
 ### Changed
