@@ -18,6 +18,7 @@ import {
   extractLinks,
   extractImages,
   computeIndexabilitySignal,
+  computeRobotsDirectivesConflict,
   extractSeoFacts,
   decodeEntities,
 } from '../lib/html-extract.js';
@@ -482,6 +483,43 @@ test('computeIndexabilitySignal flags a canonical pointing elsewhere', () => {
   assert.equal(r.reasons.some((m) => m.includes('canonical points to a different URL')), true);
 });
 
+test('computeRobotsDirectivesConflict flags a genuine index/noindex disagreement between meta and header', () => {
+  const r = computeRobotsDirectivesConflict(['index', 'follow'], ['noindex']);
+  assert.equal(r.conflict, true);
+  assert.match(r.reasons[0], /meta robots says "index" but X-Robots-Tag says "noindex"/);
+});
+
+test('computeRobotsDirectivesConflict flags a genuine follow/nofollow disagreement between meta and header', () => {
+  const r = computeRobotsDirectivesConflict(['nofollow'], ['follow']);
+  assert.equal(r.conflict, true);
+  assert.match(r.reasons[0], /meta robots says "nofollow" but X-Robots-Tag says "follow"/);
+});
+
+test('computeRobotsDirectivesConflict can report both families conflicting at once', () => {
+  const r = computeRobotsDirectivesConflict(['index', 'follow'], ['noindex', 'nofollow']);
+  assert.equal(r.conflict, true);
+  assert.equal(r.reasons.length, 2);
+});
+
+test('computeRobotsDirectivesConflict expands "all"/"none" shorthand before comparing', () => {
+  const r1 = computeRobotsDirectivesConflict(['all'], ['noindex']);
+  assert.equal(r1.conflict, true, '"all" means index+follow, which disagrees with header noindex');
+
+  const r2 = computeRobotsDirectivesConflict(['none'], ['index']);
+  assert.equal(r2.conflict, true, '"none" means noindex+nofollow, which disagrees with header index');
+
+  const r3 = computeRobotsDirectivesConflict(['all'], ['index', 'follow']);
+  assert.equal(r3.conflict, false, '"all" and an explicit index,follow header agree');
+});
+
+test('computeRobotsDirectivesConflict does not flag agreement, or a directive present in only one source', () => {
+  assert.equal(computeRobotsDirectivesConflict(['noindex'], ['noindex']).conflict, false, 'both sources agree');
+  assert.equal(computeRobotsDirectivesConflict(['noindex'], []).conflict, false, 'only meta has a directive — nothing to disagree with');
+  assert.equal(computeRobotsDirectivesConflict([], ['noindex']).conflict, false, 'only the header has a directive — nothing to disagree with');
+  assert.equal(computeRobotsDirectivesConflict([], []).conflict, false, 'neither source has any directive');
+  assert.equal(computeRobotsDirectivesConflict(['noarchive'], ['nosnippet']).conflict, false, 'directives with no opposite-pair family are never flagged as conflicting');
+});
+
 test('decodeEntities handles named and numeric entities', () => {
   assert.equal(decodeEntities('A &amp; B'), 'A & B');
   assert.equal(decodeEntities('&#39;quoted&#39;'), "'quoted'");
@@ -606,4 +644,32 @@ test('extractSeoFacts reports isPaginated:false and no conflict for an ordinary,
   assert.equal(facts.paginationNext, null);
   assert.equal(facts.paginationPrev, null);
   assert.equal(facts.paginationCanonicalConflict, false);
+});
+
+test('extractSeoFacts flags a real disagreement between meta robots and X-Robots-Tag end-to-end', () => {
+  const html = '<html><head><title>Conflicting signals</title><meta name="robots" content="index, follow"></head></html>';
+  const facts = extractSeoFacts(html, 'https://example.com/page', { statusCode: 200, xRobotsTagHeader: 'noindex' });
+  assert.deepEqual(facts.robotsMetaDirectives, ['index', 'follow']);
+  assert.deepEqual(facts.xRobotsTagDirectives, ['noindex']);
+  assert.equal(facts.robotsDirectivesConflict, true);
+  assert.match(facts.robotsDirectivesConflictReasons[0], /meta robots says "index" but X-Robots-Tag says "noindex"/);
+  // The conflict is surfaced as its own fact -- it doesn't change the
+  // indexable signal itself, which already correctly reflects "noindex
+  // present anywhere" regardless of the disagreement.
+  assert.equal(facts.indexable, false);
+});
+
+test('extractSeoFacts reports no conflict when meta and X-Robots-Tag agree, or when only one is present', () => {
+  const agreeing = extractSeoFacts('<html><head><meta name="robots" content="noindex"></head></html>', 'https://example.com/a', {
+    statusCode: 200,
+    xRobotsTagHeader: 'noindex',
+  });
+  assert.equal(agreeing.robotsDirectivesConflict, false);
+  assert.deepEqual(agreeing.robotsDirectivesConflictReasons, []);
+
+  const metaOnly = extractSeoFacts('<html><head><meta name="robots" content="noindex"></head></html>', 'https://example.com/b', { statusCode: 200 });
+  assert.equal(metaOnly.robotsDirectivesConflict, false);
+
+  const neither = extractSeoFacts('<html><head><title>Plain</title></head></html>', 'https://example.com/c', { statusCode: 200 });
+  assert.equal(neither.robotsDirectivesConflict, false);
 });

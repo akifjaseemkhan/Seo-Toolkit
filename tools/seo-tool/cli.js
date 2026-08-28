@@ -99,6 +99,7 @@ function printPageSummary(page) {
   }
   console.log(`  H1 count: ${page.h1Count ?? '?'}  H2 count: ${page.h2Count ?? '?'}`);
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
+  console.log(`  X-Robots-Tag: ${(page.xRobotsTagDirectives || []).join(', ') || '(none)'}${page.robotsDirectivesConflict ? `  CONFLICT: ${page.robotsDirectivesConflictReasons.join('; ')}` : ''}`);
   console.log(`  Indexable signal: ${page.indexable === undefined ? '?' : page.indexable}${page.indexabilityReasons && page.indexabilityReasons.length ? ` (${page.indexabilityReasons.join('; ')})` : ''}`);
   console.log(`  JSON-LD blocks: ${page.jsonLd ? page.jsonLd.length : 0}`);
   console.log(`  Internal links: ${page.internalLinks ? page.internalLinks.length : 0}  External links: ${page.externalLinks ? page.externalLinks.length : 0}`);

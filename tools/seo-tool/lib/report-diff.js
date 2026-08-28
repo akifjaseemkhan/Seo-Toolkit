@@ -45,6 +45,7 @@ const TRACKED_PAGE_FIELDS = [
   'metaDescription',
   'robotsMetaDirectives',
   'xRobotsTagDirectives',
+  'robotsDirectivesConflict',
   'h1Count',
   'isPaginated',
   'paginationCanonicalConflict',

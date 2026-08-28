@@ -471,6 +471,59 @@ export function computeIndexabilitySignal({ statusCode, robotsMetaDirectives = [
   return { indexable, reasons };
 }
 
+// The two directive families search engines treat as opposite pairs.
+// "all"/"none" are the documented shorthand for both pairs at once (Google:
+// "all" == the default, "none" == "noindex, nofollow"), so they're expanded
+// before comparing rather than treated as a third, unrelated value.
+const ROBOTS_DIRECTIVE_FAMILIES = [
+  { positive: 'index', negative: 'noindex' },
+  { positive: 'follow', negative: 'nofollow' },
+];
+
+function expandRobotsShorthand(directives) {
+  const set = new Set(directives);
+  if (set.has('all')) {
+    set.add('index');
+    set.add('follow');
+  }
+  if (set.has('none')) {
+    set.add('noindex');
+    set.add('nofollow');
+  }
+  return set;
+}
+
+/**
+ * checklists/metadata-checklist.md requires "no conflicting robots
+ * directives between meta tag and HTTP header" -- a real, checkable fact
+ * distinct from indexability itself (a `noindex` from either source already
+ * makes a page non-indexable regardless of what the other source says, so a
+ * conflict here doesn't change the `indexable` signal -- it flags that the
+ * two sources actively disagree, which is a real setup mistake even when
+ * the practical effect happens to be "safe" this time).
+ *
+ * Only flags a genuine disagreement: BOTH sources present, and asserting
+ * opposite values for the same family (index vs. noindex, or follow vs.
+ * nofollow). A directive present in only one source is not a conflict --
+ * that's just one signal with nothing to disagree with.
+ */
+export function computeRobotsDirectivesConflict(robotsMetaDirectives = [], xRobotsTagDirectives = []) {
+  if (robotsMetaDirectives.length === 0 || xRobotsTagDirectives.length === 0) {
+    return { conflict: false, reasons: [] };
+  }
+  const metaSet = expandRobotsShorthand(robotsMetaDirectives);
+  const headerSet = expandRobotsShorthand(xRobotsTagDirectives);
+  const reasons = [];
+  for (const { positive, negative } of ROBOTS_DIRECTIVE_FAMILIES) {
+    const metaValue = metaSet.has(positive) ? positive : metaSet.has(negative) ? negative : null;
+    const headerValue = headerSet.has(positive) ? positive : headerSet.has(negative) ? negative : null;
+    if (metaValue && headerValue && metaValue !== headerValue) {
+      reasons.push(`meta robots says "${metaValue}" but X-Robots-Tag says "${headerValue}"`);
+    }
+  }
+  return { conflict: reasons.length > 0, reasons };
+}
+
 /**
  * Run every extractor over one HTML document and return a single facts
  * object. This is the primary entry point used by the crawler and the
@@ -497,6 +550,7 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     canonicalUrl: canonical,
     finalUrl: pageUrl,
   });
+  const robotsDirectivesConflictResult = computeRobotsDirectivesConflict(robotsMetaDirectives, xRobotsTagDirectives);
 
   return {
     title: extractTitle(html),
@@ -519,6 +573,8 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     lang: extractLangAttribute(html),
     robotsMetaDirectives,
     xRobotsTagDirectives,
+    robotsDirectivesConflict: robotsDirectivesConflictResult.conflict,
+    robotsDirectivesConflictReasons: robotsDirectivesConflictResult.reasons,
     indexable: indexability.indexable,
     indexabilityReasons: indexability.reasons,
     ...headings,

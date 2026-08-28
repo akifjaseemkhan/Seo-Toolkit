@@ -92,6 +92,11 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/robots-conflict') {
+      res.writeHead(200, { 'Content-Type': 'text/html', 'X-Robots-Tag': 'noindex' });
+      res.end('<html><head><title>Conflicting Robots Signals</title><meta name="robots" content="index, follow"></head><body>x</body></html>');
+      return;
+    }
     if (req.url === '/paginated-page-2') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
@@ -381,6 +386,47 @@ test('CLI page human-readable output omits the Pagination line entirely when a p
     const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
     assert.equal(code, 0);
     assert.ok(!stdout.includes('Pagination:'), 'the home fixture page has no rel=next/rel=prev, so the line should not appear at all');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json flags a real disagreement between meta robots and the X-Robots-Tag header end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/robots-conflict`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.deepEqual(page.robotsMetaDirectives, ['index', 'follow']);
+    assert.deepEqual(page.xRobotsTagDirectives, ['noindex']);
+    assert.equal(page.robotsDirectivesConflict, true);
+    assert.match(page.robotsDirectivesConflictReasons[0], /meta robots says "index" but X-Robots-Tag says "noindex"/);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows the X-Robots-Tag line with a CONFLICT marker when meta and header disagree', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/robots-conflict`]);
+    assert.equal(code, 0);
+    assert.ok(
+      stdout.includes('X-Robots-Tag: noindex  CONFLICT: meta robots says "index" but X-Robots-Tag says "noindex"'),
+      `expected an X-Robots-Tag line flagging the conflict, got:\n${stdout}`
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows the X-Robots-Tag line without a CONFLICT marker when there is no disagreement', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('X-Robots-Tag: (none)'), `expected a plain X-Robots-Tag line, got:\n${stdout}`);
+    assert.ok(!stdout.includes('CONFLICT'), 'the home fixture page has no X-Robots-Tag header at all, so there is nothing to disagree with');
   } finally {
     server.close();
   }

@@ -96,6 +96,14 @@ test('diffReports reports multiple simultaneous field changes on the same page',
   assert.deepEqual(fields, ['h1Count', 'status', 'title']);
 });
 
+test('diffReports tracks a newly-appeared robotsDirectivesConflict as a real change', () => {
+  const before = report({ pages: [page('https://example.com/a', { robotsDirectivesConflict: false })] });
+  const after = report({ pages: [page('https://example.com/a', { robotsDirectivesConflict: true })] });
+  const result = diffReports(before, after);
+  assert.equal(result.pages.changed.length, 1);
+  assert.deepEqual(result.pages.changed[0].changes, [{ field: 'robotsDirectivesConflict', before: false, after: true }]);
+});
+
 test('diffReports treats robotsMetaDirectives/xRobotsTagDirectives arrays as equal regardless of order', () => {
   const before = report({ pages: [page('https://example.com/a', { robotsMetaDirectives: ['noindex', 'nofollow'] })] });
   const after = report({ pages: [page('https://example.com/a', { robotsMetaDirectives: ['nofollow', 'noindex'] })] });
