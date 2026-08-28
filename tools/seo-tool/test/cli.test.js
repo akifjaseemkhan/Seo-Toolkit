@@ -97,6 +97,16 @@ function startFixtureServer() {
       res.end('<html><head><title>Conflicting Robots Signals</title><meta name="robots" content="index, follow"></head><body>x</body></html>');
       return;
     }
+    if (req.url === '/incomplete-jsonld') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>Incomplete Schema</title>' +
+          '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Acme"}</script>' +
+          '<script type="application/ld+json">{"name":"Missing context and type"}</script>' +
+          '</head><body>x</body></html>'
+      );
+      return;
+    }
     if (req.url === '/paginated-page-2') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
@@ -427,6 +437,43 @@ test('CLI page human-readable output shows the X-Robots-Tag line without a CONFL
     assert.equal(code, 0);
     assert.ok(stdout.includes('X-Robots-Tag: (none)'), `expected a plain X-Robots-Tag line, got:\n${stdout}`);
     assert.ok(!stdout.includes('CONFLICT'), 'the home fixture page has no X-Robots-Tag header at all, so there is nothing to disagree with');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json flags JSON-LD blocks missing @context/@type end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/incomplete-jsonld`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.jsonLd.length, 2);
+    assert.deepEqual(page.jsonLd[0].missingRequiredProperties, [], 'the first block declares both @context and @type');
+    assert.deepEqual(page.jsonLd[1].missingRequiredProperties.sort(), ['@context', '@type'], 'the second block declares neither');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows a missing @context/@type count on the JSON-LD line when applicable', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/incomplete-jsonld`]);
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('JSON-LD blocks: 2 (1 missing @context/@type)'), `expected the JSON-LD line to flag the incomplete block, got:\n${stdout}`);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows no missing-property note when every JSON-LD block is complete', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('JSON-LD blocks: 0'), `expected a plain JSON-LD line for a page with no blocks at all, got:\n${stdout}`);
+    assert.ok(!stdout.includes('missing @context/@type'), 'the home fixture page has no JSON-LD at all, so there is nothing to flag');
   } finally {
     server.close();
   }

@@ -327,6 +327,45 @@ export function extractTwitterCard(metaTags) {
   return tw;
 }
 
+/**
+ * checklists/schema-checklist.md requires "Required properties for the
+ * chosen type present (`@context`, `@type`, and type-specific required
+ * fields)". This checks only the universal, spec-level structural minimum
+ * every JSON-LD/schema.org block needs -- `@context` and `@type` -- not the
+ * type-specific required-field lists (Article needs a real datePublished,
+ * Product needs offers, Review needs real review data, etc.). Validating
+ * those would mean building and maintaining a database of schema.org's
+ * hundreds of types and their individual requirements -- an unnecessarily
+ * broad schema.org validator this tool deliberately does not attempt.
+ * That judgment stays with rules/schema-rules.md's "Choosing the right
+ * type" section and no-fabrication.md, applied by a human/agent, not this
+ * fact-gathering layer.
+ *
+ * Handles the common `{ "@context": ..., "@type": ... }` shape and the
+ * `@graph` container pattern (a root object bundling several typed nodes
+ * under one shared `@context` -- `@type` isn't expected on the container
+ * itself, only its member nodes). A top-level JSON-LD array (multiple
+ * independent node objects in one script, no `@graph` wrapper) is a real
+ * but much rarer pattern; each item is checked the same way and any
+ * missing property from any item is reported once. Nodes nested inside a
+ * `@graph` are NOT individually re-checked -- recursing into every nested
+ * node is exactly the kind of broader validation this function stays out
+ * of; the presence of `@graph` itself is treated as satisfying the
+ * container's own `@type` requirement.
+ */
+export function findMissingRequiredJsonLdProperties(parsed) {
+  if (parsed === null || typeof parsed !== 'object') return [];
+  const nodes = Array.isArray(parsed) ? parsed : [parsed];
+  const missing = new Set();
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    if (!node['@context']) missing.add('@context');
+    const isGraphContainer = Array.isArray(node['@graph']);
+    if (!isGraphContainer && !node['@type']) missing.add('@type');
+  }
+  return [...missing];
+}
+
 export function extractJsonLd(html) {
   const re = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
   const blocks = [];
@@ -343,7 +382,10 @@ export function extractJsonLd(html) {
     } catch (err) {
       parseError = err.message;
     }
-    blocks.push({ raw, parsed, parseError });
+    // Only evaluated once the JSON itself parses -- a parseError already
+    // flags a broken block, so there's nothing further to check on it.
+    const missingRequiredProperties = parseError ? null : findMissingRequiredJsonLdProperties(parsed);
+    blocks.push({ raw, parsed, parseError, missingRequiredProperties });
   }
   return blocks;
 }

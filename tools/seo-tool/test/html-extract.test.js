@@ -15,6 +15,7 @@ import {
   extractOpenGraph,
   extractTwitterCard,
   extractJsonLd,
+  findMissingRequiredJsonLdProperties,
   extractLinks,
   extractImages,
   computeIndexabilitySignal,
@@ -421,8 +422,48 @@ test('extractJsonLd parses valid blocks and captures parse errors without throwi
   assert.equal(blocks.length, 2);
   assert.equal(blocks[0].parsed['@type'], 'Organization');
   assert.equal(blocks[0].parseError, null);
+  assert.deepEqual(blocks[0].missingRequiredProperties, []);
   assert.equal(blocks[1].parsed, null);
   assert.ok(blocks[1].parseError);
+  assert.equal(blocks[1].missingRequiredProperties, null, 'a block that failed to parse has nothing further to check');
+});
+
+test('findMissingRequiredJsonLdProperties flags a missing @context, a missing @type, or both', () => {
+  assert.deepEqual(findMissingRequiredJsonLdProperties({ '@context': 'https://schema.org', '@type': 'Article' }), []);
+  assert.deepEqual(findMissingRequiredJsonLdProperties({ '@type': 'Article' }), ['@context']);
+  assert.deepEqual(findMissingRequiredJsonLdProperties({ '@context': 'https://schema.org' }), ['@type']);
+  assert.deepEqual(findMissingRequiredJsonLdProperties({}).sort(), ['@context', '@type']);
+});
+
+test('findMissingRequiredJsonLdProperties treats a @graph container as not needing its own @type', () => {
+  const block = { '@context': 'https://schema.org', '@graph': [{ '@type': 'Product', name: 'Widget' }, { '@type': 'BreadcrumbList' }] };
+  assert.deepEqual(findMissingRequiredJsonLdProperties(block), []);
+});
+
+test('findMissingRequiredJsonLdProperties still requires @context on a @graph container', () => {
+  const block = { '@graph': [{ '@type': 'Product' }] };
+  assert.deepEqual(findMissingRequiredJsonLdProperties(block), ['@context']);
+});
+
+test('findMissingRequiredJsonLdProperties checks each item of a top-level array independently, deduping the result', () => {
+  const withOneBad = [
+    { '@context': 'https://schema.org', '@type': 'Product' },
+    { '@type': 'Review' }, // missing @context
+  ];
+  assert.deepEqual(findMissingRequiredJsonLdProperties(withOneBad), ['@context']);
+
+  const bothFine = [
+    { '@context': 'https://schema.org', '@type': 'Product' },
+    { '@context': 'https://schema.org', '@type': 'Review' },
+  ];
+  assert.deepEqual(findMissingRequiredJsonLdProperties(bothFine), []);
+});
+
+test('findMissingRequiredJsonLdProperties never throws on null, a non-object, or an empty array', () => {
+  assert.deepEqual(findMissingRequiredJsonLdProperties(null), []);
+  assert.deepEqual(findMissingRequiredJsonLdProperties('a string'), []);
+  assert.deepEqual(findMissingRequiredJsonLdProperties(42), []);
+  assert.deepEqual(findMissingRequiredJsonLdProperties([]), []);
 });
 
 test('extractLinks classifies internal vs external and resolves relative hrefs', () => {

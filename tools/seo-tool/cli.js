@@ -101,7 +101,9 @@ function printPageSummary(page) {
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
   console.log(`  X-Robots-Tag: ${(page.xRobotsTagDirectives || []).join(', ') || '(none)'}${page.robotsDirectivesConflict ? `  CONFLICT: ${page.robotsDirectivesConflictReasons.join('; ')}` : ''}`);
   console.log(`  Indexable signal: ${page.indexable === undefined ? '?' : page.indexable}${page.indexabilityReasons && page.indexabilityReasons.length ? ` (${page.indexabilityReasons.join('; ')})` : ''}`);
-  console.log(`  JSON-LD blocks: ${page.jsonLd ? page.jsonLd.length : 0}`);
+  const jsonLdCount = page.jsonLd ? page.jsonLd.length : 0;
+  const jsonLdMissingRequired = page.jsonLd ? page.jsonLd.filter((b) => b.missingRequiredProperties && b.missingRequiredProperties.length > 0).length : 0;
+  console.log(`  JSON-LD blocks: ${jsonLdCount}${jsonLdMissingRequired ? ` (${jsonLdMissingRequired} missing @context/@type)` : ''}`);
   console.log(`  Internal links: ${page.internalLinks ? page.internalLinks.length : 0}  External links: ${page.externalLinks ? page.externalLinks.length : 0}`);
   console.log(`  Images missing alt: ${page.imagesMissingAlt ?? '?'}`);
 }
