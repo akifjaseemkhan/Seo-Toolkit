@@ -148,6 +148,29 @@ function startFixtureServer() {
       res.end('<html><head><title>New Page</title></head><body>x</body></html>');
       return;
     }
+    // Another small, self-contained subtree (not linked from / or /about)
+    // for the hreflang-reciprocity tests below: /hreflang-en declares a
+    // link to /hreflang-fr, but /hreflang-fr never declares one back.
+    if (req.url === '/hreflang-start') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Hreflang Start</title></head><body><a href="/hreflang-en">EN</a><a href="/hreflang-fr">FR</a></body></html>');
+      return;
+    }
+    if (req.url === '/hreflang-en') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>English</title>' +
+          '<link rel="alternate" hreflang="en-US" href="/hreflang-en">' +
+          '<link rel="alternate" hreflang="fr-FR" href="/hreflang-fr">' +
+          '</head><body>x</body></html>'
+      );
+      return;
+    }
+    if (req.url === '/hreflang-fr') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>French</title><link rel="alternate" hreflang="fr-FR" href="/hreflang-fr"></head><body>x</body></html>');
+      return;
+    }
     res.writeHead(404);
     res.end('not found');
   });
@@ -586,6 +609,37 @@ test('CLI crawl human-readable output shows the internal-links-through-redirects
     const withoutRedirectLink = await runCli(['crawl', `${baseUrl}/`, '--max-pages=5', '--delay=0']);
     assert.equal(withoutRedirectLink.code, 0);
     assert.match(withoutRedirectLink.stdout, /Internal links through a redirect: 0/);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI crawl --json flags a non-reciprocal hreflang link between two real crawled pages', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['crawl', `${baseUrl}/hreflang-start`, '--max-pages=5', '--delay=0', '--json']);
+    assert.equal(code, 0);
+    const report = JSON.parse(stdout);
+    assert.equal(report.hreflangReciprocity.nonReciprocalHreflang.length, 1);
+    const finding = report.hreflangReciprocity.nonReciprocalHreflang[0];
+    assert.equal(finding.from, `${baseUrl}/hreflang-en`);
+    assert.equal(finding.to, `${baseUrl}/hreflang-fr`);
+    assert.equal(finding.hreflang, 'fr-FR');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI crawl human-readable output shows the non-reciprocal-hreflang count only when there is something to report', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const withNonReciprocal = await runCli(['crawl', `${baseUrl}/hreflang-start`, '--max-pages=5', '--delay=0']);
+    assert.equal(withNonReciprocal.code, 0);
+    assert.match(withNonReciprocal.stdout, /Non-reciprocal hreflang links: 1/);
+
+    const withoutAnyHreflang = await runCli(['crawl', `${baseUrl}/`, '--max-pages=5', '--delay=0']);
+    assert.equal(withoutAnyHreflang.code, 0);
+    assert.ok(!withoutAnyHreflang.stdout.includes('Non-reciprocal hreflang links'), 'the plain fixture tree declares no hreflang at all, so the line should not appear');
   } finally {
     server.close();
   }

@@ -186,6 +186,7 @@ export function diffReports(reportBefore, reportAfter) {
     pages: null,
     linkGraph: null,
     duplicateContent: null,
+    hreflangReciprocity: null,
     regressions: [],
     improvements: [],
   };
@@ -226,6 +227,16 @@ export function diffReports(reportBefore, reportAfter) {
         reportBefore.duplicateContent.duplicateMetaDescriptions,
         reportAfter.duplicateContent.duplicateMetaDescriptions,
         (x) => x.value
+      ),
+    };
+  }
+
+  if (reportBefore.hreflangReciprocity && reportAfter.hreflangReciprocity) {
+    result.hreflangReciprocity = {
+      nonReciprocalHreflang: diffFindingList(
+        reportBefore.hreflangReciprocity.nonReciprocalHreflang,
+        reportAfter.hreflangReciprocity.nonReciprocalHreflang,
+        (x) => `${x.from}=>${x.to}:${(x.hreflang || '').toLowerCase()}`
       ),
     };
   }

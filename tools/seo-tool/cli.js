@@ -17,6 +17,7 @@ import { extractSeoFacts } from './lib/html-extract.js';
 import { crawl, fetchRobotsForOrigin } from './lib/crawler.js';
 import { buildLinkGraph } from './lib/link-graph.js';
 import { buildDuplicateContentReport } from './lib/duplicate-content.js';
+import { buildHreflangReciprocityReport } from './lib/hreflang-reciprocity.js';
 import { diffReports, isSeoToolReport } from './lib/report-diff.js';
 import { parseRobotsTxt, checkImportantPathConflicts, ROBOTS_NOT_SECURITY_NOTE } from './lib/robots.js';
 import { parseSitemap, resolveSitemapTree } from './lib/sitemap.js';
@@ -141,6 +142,9 @@ function printCrawlSummary(report) {
       console.log(`  Duplicate titles: ${dupTitles} group(s)  Duplicate meta descriptions: ${dupDescriptions} group(s)`);
     }
   }
+  if (report.hreflangReciprocity && report.hreflangReciprocity.nonReciprocalHreflang.length) {
+    console.log(`  Non-reciprocal hreflang links: ${report.hreflangReciprocity.nonReciprocalHreflang.length}`);
+  }
   console.log(`\nRun with --json for full machine-readable output.`);
 }
 
@@ -223,8 +227,8 @@ function printProjectSummary(facts) {
 function printDiffSummary(report) {
   const d = report.diff;
   console.log(`\nReport diff: ${report.meta.target}`);
-  if (!d.pages && !d.linkGraph && !d.duplicateContent) {
-    console.log('  Nothing comparable found between these two reports (no pages/linkGraph/duplicateContent section present in both).');
+  if (!d.pages && !d.linkGraph && !d.duplicateContent && !d.hreflangReciprocity) {
+    console.log('  Nothing comparable found between these two reports (no pages/linkGraph/duplicateContent/hreflangReciprocity section present in both).');
     return;
   }
   if (d.pages) {
@@ -248,6 +252,9 @@ function printDiffSummary(report) {
   if (d.duplicateContent) {
     const dc = d.duplicateContent;
     console.log(`  Duplicate content: new duplicate-title groups ${dc.duplicateTitles.added.length}, new duplicate-description groups ${dc.duplicateMetaDescriptions.added.length}`);
+  }
+  if (d.hreflangReciprocity) {
+    console.log(`  Hreflang reciprocity: new non-reciprocal links ${d.hreflangReciprocity.nonReciprocalHreflang.added.length}`);
   }
   console.log(`\nRun with --json for full machine-readable output.`);
 }
@@ -300,7 +307,8 @@ async function cmdCrawl(url, flags, commandName = 'crawl') {
   const crawlResult = await crawl(url, options);
   const linkGraph = buildLinkGraph(crawlResult.pages, url);
   const duplicateContent = buildDuplicateContentReport(crawlResult.pages);
-  const report = assembleReport({ command: commandName, target: url, options, startedAt, crawlResult, linkGraph, duplicateContent });
+  const hreflangReciprocity = buildHreflangReciprocityReport(crawlResult.pages);
+  const report = assembleReport({ command: commandName, target: url, options, startedAt, crawlResult, linkGraph, duplicateContent, hreflangReciprocity });
   await emit(report, flags, () => printCrawlSummary(report));
   if (crawlResult.pages.length === 0 && crawlResult.errors.length > 0) process.exitCode = 1;
 }
@@ -435,8 +443,9 @@ async function cmdAudit(url, flags) {
   const knownUrls = (sitemapResult.type === 'urlset' || sitemapResult.type === 'sitemapindex') ? sitemapResult.urls.map((u) => u.loc).filter(Boolean) : [];
   const linkGraph = buildLinkGraph(crawlResult.pages, url, { knownUrls });
   const duplicateContent = buildDuplicateContentReport(crawlResult.pages);
+  const hreflangReciprocity = buildHreflangReciprocityReport(crawlResult.pages);
 
-  const report = assembleReport({ command: 'audit', target: url, options, startedAt, crawlResult, linkGraph, duplicateContent, sitemapResult, robotsResult });
+  const report = assembleReport({ command: 'audit', target: url, options, startedAt, crawlResult, linkGraph, duplicateContent, hreflangReciprocity, sitemapResult, robotsResult });
   await emit(report, flags, () => printAuditSummary(report));
   if (crawlResult.pages.length === 0 && crawlResult.errors.length > 0) process.exitCode = 1;
 }

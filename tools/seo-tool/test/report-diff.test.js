@@ -21,6 +21,7 @@ function report(overrides = {}) {
     pages: [],
     linkGraph: { orphanCandidates: [], brokenInternalLinks: [], internalLinksThroughRedirects: [], sitemapIndexabilityConflicts: [] },
     duplicateContent: { duplicateTitles: [], duplicateMetaDescriptions: [] },
+    hreflangReciprocity: { nonReciprocalHreflang: [] },
     ...overrides,
   };
 }
@@ -207,6 +208,23 @@ test('diffReports flags newly-appeared and resolved duplicate-content groups by 
   assert.equal(result.duplicateContent.duplicateMetaDescriptions.added.length, 1);
 });
 
+// ---------- diffReports: hreflangReciprocity ----------
+
+test('diffReports flags newly-appeared and resolved non-reciprocal hreflang links', () => {
+  const before = report({ hreflangReciprocity: { nonReciprocalHreflang: [{ from: 'https://example.com/en', to: 'https://example.com/fr', hreflang: 'fr-FR' }] } });
+  const after = report({ hreflangReciprocity: { nonReciprocalHreflang: [{ from: 'https://example.com/de', to: 'https://example.com/es', hreflang: 'es-ES' }] } });
+  const result = diffReports(before, after);
+  assert.equal(result.hreflangReciprocity.nonReciprocalHreflang.removed.length, 1);
+  assert.equal(result.hreflangReciprocity.nonReciprocalHreflang.added.length, 1);
+});
+
+test('diffReports leaves hreflangReciprocity null when either report lacks it (e.g. a sitemap-only report)', () => {
+  const withIt = report();
+  const withoutIt = { meta: { tool: 'seo-tool', command: 'sitemap' }, sitemap: { entryCount: 0 } };
+  const result = diffReports(withIt, withoutIt);
+  assert.equal(result.hreflangReciprocity, null);
+});
+
 // ---------- diffReports: summary + edge cases ----------
 
 test('diffReports computes a summary that matches the detailed sections', () => {
@@ -245,6 +263,7 @@ test('diffReports handles two reports with no comparable sections at all (return
   assert.equal(result.pages, null);
   assert.equal(result.linkGraph, null);
   assert.equal(result.duplicateContent, null);
+  assert.equal(result.hreflangReciprocity, null);
   assert.deepEqual(result.regressions, []);
   assert.deepEqual(result.improvements, []);
   assert.deepEqual(result.summary, { pagesAdded: 0, pagesRemoved: 0, pagesChanged: 0, regressions: 0, improvements: 0 });

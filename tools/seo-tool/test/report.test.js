@@ -60,11 +60,12 @@ test('assembleReport pulls errors and warnings up from crawlResult into the top-
   assert.deepEqual(report.warnings, ['robots.txt not available']);
 });
 
-test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, and project sections through unchanged when supplied', () => {
+test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, hreflangReciprocity, and project sections through unchanged when supplied', () => {
   const sitemapResult = { source: 'https://example.com/sitemap.xml', type: 'urlset', urls: [], entryCount: 0, issues: [] };
   const robotsResult = { source: 'https://example.com/robots.txt', found: true, groups: [], sitemaps: [] };
   const linkGraph = { orphanCandidates: [], crawlDepthOutliers: [], brokenInternalLinks: [], unverifiedInternalLinks: [], note: 'x' };
   const duplicateContent = { duplicateTitles: [], duplicateMetaDescriptions: [] };
+  const hreflangReciprocity = { nonReciprocalHreflang: [], note: 'x' };
   const projectFacts = { rootDir: '/tmp/project', packageJson: null };
 
   const report = assembleReport({
@@ -77,6 +78,7 @@ test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, and pr
     robotsResult,
     linkGraph,
     duplicateContent,
+    hreflangReciprocity,
     projectFacts,
   });
 
@@ -84,6 +86,7 @@ test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, and pr
   assert.equal(report.robots, robotsResult);
   assert.equal(report.linkGraph, linkGraph);
   assert.equal(report.duplicateContent, duplicateContent);
+  assert.equal(report.hreflangReciprocity, hreflangReciprocity);
   assert.equal(report.project, projectFacts);
 });
 
@@ -106,6 +109,7 @@ test('assembleReport leaves crawl-derived sections undefined for a non-crawl com
   assert.equal(report.robots, undefined);
   assert.equal(report.linkGraph, undefined);
   assert.equal(report.duplicateContent, undefined);
+  assert.equal(report.hreflangReciprocity, undefined);
   assert.equal(report.project, undefined);
   assert.equal(report.diff, undefined);
   assert.ok(report.sitemap);
@@ -120,6 +124,7 @@ test('assembleReport handles a fully empty/partial call (no result objects at al
   assert.equal(report.robots, undefined);
   assert.equal(report.linkGraph, undefined);
   assert.equal(report.duplicateContent, undefined);
+  assert.equal(report.hreflangReciprocity, undefined);
   assert.equal(report.project, undefined);
   assert.equal(report.diff, undefined);
 });
@@ -166,6 +171,7 @@ test('assembleReport JSON output never contains a literal "undefined" section fo
   assert.equal('sitemap' in serialized, false);
   assert.equal('linkGraph' in serialized, false);
   assert.equal('duplicateContent' in serialized, false);
+  assert.equal('hreflangReciprocity' in serialized, false);
   assert.equal('project' in serialized, false);
   assert.equal('diff' in serialized, false);
   assert.ok('robots' in serialized);
