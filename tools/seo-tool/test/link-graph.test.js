@@ -5,6 +5,7 @@ import {
   findOrphansAgainstKnownUrls,
   findCrawlDepthOutliers,
   findBrokenInternalLinks,
+  findInternalLinksThroughRedirects,
   findSitemapIndexabilityConflicts,
   buildLinkGraph,
 } from '../lib/link-graph.js';
@@ -79,6 +80,99 @@ test('findBrokenInternalLinks flags fetch errors as broken with a reason', () =>
   const { broken } = findBrokenInternalLinks(pages);
   assert.equal(broken.length, 1);
   assert.match(broken[0].reason, /timed out/);
+});
+
+// ---------- findInternalLinksThroughRedirects ----------
+
+test('findInternalLinksThroughRedirects flags a link whose target only resolved after a redirect', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/old' }] }),
+    page('https://example.com/old', {
+      finalUrl: 'https://example.com/new',
+      redirectChain: [{ url: 'https://example.com/old', status: 301, location: 'https://example.com/new' }],
+    }),
+  ];
+  const results = findInternalLinksThroughRedirects(pages);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].from, 'https://example.com/');
+  assert.equal(results[0].to, 'https://example.com/old');
+  assert.equal(results[0].finalUrl, 'https://example.com/new');
+  assert.equal(results[0].redirectHops, 1);
+});
+
+test('findInternalLinksThroughRedirects does not flag a link pointing directly at its target (no redirect)', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/direct' }] }),
+    page('https://example.com/direct', { redirectChain: [] }),
+  ];
+  assert.deepEqual(findInternalLinksThroughRedirects(pages), []);
+});
+
+test('findInternalLinksThroughRedirects reports the correct hop count for a multi-hop redirect chain', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/a' }] }),
+    page('https://example.com/a', {
+      finalUrl: 'https://example.com/c',
+      redirectChain: [
+        { url: 'https://example.com/a', status: 301, location: 'https://example.com/b' },
+        { url: 'https://example.com/b', status: 301, location: 'https://example.com/c' },
+      ],
+    }),
+  ];
+  const results = findInternalLinksThroughRedirects(pages);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].redirectHops, 2);
+  assert.equal(results[0].finalUrl, 'https://example.com/c');
+});
+
+test('findInternalLinksThroughRedirects does not flag a link to a target that errored (a different, already-reported concern)', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/timeout' }] }),
+    page('https://example.com/timeout', { status: null, error: { type: 'timeout' }, redirectChain: [{ url: 'https://example.com/timeout', status: 301, location: 'https://example.com/x' }] }),
+  ];
+  assert.deepEqual(findInternalLinksThroughRedirects(pages), [], 'an errored target is broken/unverified territory, not this check\'s concern');
+});
+
+test('findInternalLinksThroughRedirects does not flag a link to a target that returned a 4xx/5xx status (broken, not redirected)', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/missing' }] }),
+    page('https://example.com/missing', { status: 404, redirectChain: [] }),
+  ];
+  assert.deepEqual(findInternalLinksThroughRedirects(pages), []);
+});
+
+test('findInternalLinksThroughRedirects does not flag a link to a target outside the crawl (unverified, not this check\'s concern)', () => {
+  const pages = [page('https://example.com/', { internalLinks: [{ url: 'https://example.com/never-reached' }] })];
+  assert.deepEqual(findInternalLinksThroughRedirects(pages), []);
+});
+
+test('findInternalLinksThroughRedirects excludes external and robots-skipped source pages', () => {
+  const pages = [
+    page('https://other.com/', { isExternal: true, internalLinks: [{ url: 'https://example.com/old' }] }),
+    page('https://example.com/blocked', { skipped: true, internalLinks: [{ url: 'https://example.com/old' }] }),
+    page('https://example.com/old', { finalUrl: 'https://example.com/new', redirectChain: [{ url: 'https://example.com/old', status: 301, location: 'https://example.com/new' }] }),
+  ];
+  assert.deepEqual(findInternalLinksThroughRedirects(pages), [], 'neither source page (external, robots-skipped) should be walked for links');
+});
+
+test('findInternalLinksThroughRedirects does not double-report the same from->to pair linked twice', () => {
+  const pages = [
+    page('https://example.com/', {
+      internalLinks: [{ url: 'https://example.com/old' }, { url: 'https://example.com/old' }],
+    }),
+    page('https://example.com/old', { finalUrl: 'https://example.com/new', redirectChain: [{ url: 'https://example.com/old', status: 301, location: 'https://example.com/new' }] }),
+  ];
+  assert.equal(findInternalLinksThroughRedirects(pages).length, 1);
+});
+
+test('findInternalLinksThroughRedirects flags multiple distinct redirect-hop links across different pages', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/old-a' }] }),
+    page('https://example.com/about', { internalLinks: [{ url: 'https://example.com/old-b' }] }),
+    page('https://example.com/old-a', { finalUrl: 'https://example.com/new-a', redirectChain: [{ url: 'https://example.com/old-a', status: 301, location: 'https://example.com/new-a' }] }),
+    page('https://example.com/old-b', { finalUrl: 'https://example.com/new-b', redirectChain: [{ url: 'https://example.com/old-b', status: 301, location: 'https://example.com/new-b' }] }),
+  ];
+  assert.equal(findInternalLinksThroughRedirects(pages).length, 2);
 });
 
 test('buildLinkGraph includes the incomplete-crawl caveat note', () => {
@@ -188,4 +282,14 @@ test('buildLinkGraph surfaces sitemapIndexabilityConflicts only when knownUrls i
   const withKnownUrls = buildLinkGraph(pages, 'https://example.com/', { knownUrls: ['https://example.com/noindexed'] });
   assert.equal(withKnownUrls.sitemapIndexabilityConflicts.length, 1);
   assert.equal(withKnownUrls.sitemapIndexabilityConflicts[0].url, 'https://example.com/noindexed');
+});
+
+test('buildLinkGraph surfaces internalLinksThroughRedirects unconditionally (no knownUrls needed, unlike sitemap-based checks)', () => {
+  const pages = [
+    page('https://example.com/', { internalLinks: [{ url: 'https://example.com/old' }] }),
+    page('https://example.com/old', { finalUrl: 'https://example.com/new', redirectChain: [{ url: 'https://example.com/old', status: 301, location: 'https://example.com/new' }] }),
+  ];
+  const graph = buildLinkGraph(pages, 'https://example.com/');
+  assert.equal(graph.internalLinksThroughRedirects.length, 1);
+  assert.equal(graph.internalLinksThroughRedirects[0].finalUrl, 'https://example.com/new');
 });

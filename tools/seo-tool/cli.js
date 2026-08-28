@@ -124,6 +124,7 @@ function printCrawlSummary(report) {
     console.log(`  Potential orphan pages: ${report.linkGraph.orphanCandidates.length}`);
     console.log(`  Crawl-depth outliers: ${report.linkGraph.crawlDepthOutliers.length}`);
     console.log(`  Broken internal links found: ${report.linkGraph.brokenInternalLinks.length}`);
+    console.log(`  Internal links through a redirect: ${report.linkGraph.internalLinksThroughRedirects.length}`);
     console.log(`  Sitemap/indexability conflicts: ${report.linkGraph.sitemapIndexabilityConflicts.length}`);
   }
   if (report.duplicateContent) {

@@ -105,6 +105,23 @@ function startFixtureServer() {
       res.end('<html><head><title>Same Title</title><meta name="description" content="Same description."></head><body>x</body></html>');
       return;
     }
+    // Another small, self-contained subtree (not linked from / or /about)
+    // for the internal-links-through-redirects tests below.
+    if (req.url === '/redirect-link-start') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>Redirect Link Start</title></head><body><a href="/old-page">Old</a></body></html>');
+      return;
+    }
+    if (req.url === '/old-page') {
+      res.writeHead(302, { Location: '/new-page' });
+      res.end();
+      return;
+    }
+    if (req.url === '/new-page') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><head><title>New Page</title></head><body>x</body></html>');
+      return;
+    }
     res.writeHead(404);
     res.end('not found');
   });
@@ -398,6 +415,38 @@ test('CLI crawl human-readable output shows duplicate title/description counts w
   }
 });
 
+test('CLI crawl --json flags an internal link that only resolves after a redirect', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['crawl', `${baseUrl}/redirect-link-start`, '--max-pages=5', '--delay=0', '--json']);
+    assert.equal(code, 0);
+    const report = JSON.parse(stdout);
+    assert.equal(report.linkGraph.internalLinksThroughRedirects.length, 1);
+    const finding = report.linkGraph.internalLinksThroughRedirects[0];
+    assert.equal(finding.from, `${baseUrl}/redirect-link-start`);
+    assert.equal(finding.to, `${baseUrl}/old-page`);
+    assert.equal(finding.finalUrl, `${baseUrl}/new-page`);
+    assert.equal(finding.redirectHops, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI crawl human-readable output shows the internal-links-through-redirects count', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const withRedirectLink = await runCli(['crawl', `${baseUrl}/redirect-link-start`, '--max-pages=5', '--delay=0']);
+    assert.equal(withRedirectLink.code, 0);
+    assert.match(withRedirectLink.stdout, /Internal links through a redirect: 1/);
+
+    const withoutRedirectLink = await runCli(['crawl', `${baseUrl}/`, '--max-pages=5', '--delay=0']);
+    assert.equal(withoutRedirectLink.code, 0);
+    assert.match(withoutRedirectLink.stdout, /Internal links through a redirect: 0/);
+  } finally {
+    server.close();
+  }
+});
+
 test('CLI robots: dispatches correctly and reports the parsed groups', async () => {
   const { server, baseUrl } = await startFixtureServer();
   try {
@@ -457,6 +506,9 @@ test('CLI audit: normal successful execution combines crawl, sitemap, and robots
     // Both crawled, sitemap-listed pages are indexable, so this must be
     // present but empty — confirms the field exists without a false positive.
     assert.deepEqual(report.linkGraph.sitemapIndexabilityConflicts, []);
+    // Neither / nor /about links through a redirect, so this must be
+    // present but empty — confirms it's wired into `audit` too, not just `crawl`.
+    assert.deepEqual(report.linkGraph.internalLinksThroughRedirects, []);
   } finally {
     server.close();
   }

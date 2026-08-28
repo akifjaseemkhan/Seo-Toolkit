@@ -167,6 +167,57 @@ export function findBrokenInternalLinks(pages) {
 }
 
 /**
+ * Internal links whose target resolved successfully but only after being
+ * redirected — the reader (and a search engine) still gets there, but every
+ * such link wastes a redirect hop instead of pointing directly at the real
+ * destination. See checklists/internal-linking-checklist.md ("linking to
+ * ... redirect chains"), workflows/internal-linking.md ("links pointing to
+ * 404s or unnecessary redirect hops" — "fix the link's destination... don't
+ * rely on a redirect alone"), and workflows/technical-seo.md ("collapse to
+ * single-hop... never introduce a new redirect hop to fix an old one").
+ *
+ * Only counts a target this crawl actually verified (present in `pages`,
+ * fetched without error) that has a non-empty `redirectChain` — a link to
+ * an un-crawled or broken target is a different, already-reported concern
+ * (see findBrokenInternalLinks above).
+ */
+export function findInternalLinksThroughRedirects(pages) {
+  const byKey = new Map();
+  for (const p of pages) {
+    const key = safeNormalize(p.requestedUrl);
+    if (key) byKey.set(key, p);
+  }
+
+  const results = [];
+  const seenPairs = new Set();
+
+  for (const page of pages) {
+    if (page.skipped || page.isExternal || !page.internalLinks) continue;
+    const fromKey = safeNormalize(page.requestedUrl);
+    for (const link of page.internalLinks) {
+      const targetKey = safeNormalize(link.url);
+      if (!targetKey) continue;
+      const pairKey = `${fromKey}=>${targetKey}`;
+      if (seenPairs.has(pairKey)) continue;
+      seenPairs.add(pairKey);
+
+      const target = byKey.get(targetKey);
+      if (!target || target.error) continue; // broken/unverified — a different, already-reported concern
+      if (target.redirectChain && target.redirectChain.length > 0) {
+        results.push({
+          from: page.finalUrl || page.requestedUrl,
+          to: link.url,
+          finalUrl: target.finalUrl,
+          redirectHops: target.redirectChain.length,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
  * Assemble the full link-graph facts object for the report. Pass
  * `knownUrls` (typically the sitemap's URL list) to get meaningful orphan
  * detection — without it, orphanCandidates will usually be empty for a
@@ -178,12 +229,14 @@ export function buildLinkGraph(pages, startUrl, { depthThreshold = 3, knownUrls 
   const knownUrlOrphans = knownUrls.length ? findOrphansAgainstKnownUrls(pages, knownUrls, startUrl) : [];
   const orphanCandidates = Array.from(new Set([...crawlOnlyOrphans, ...knownUrlOrphans]));
   const sitemapIndexabilityConflicts = knownUrls.length ? findSitemapIndexabilityConflicts(pages, knownUrls) : [];
+  const internalLinksThroughRedirects = findInternalLinksThroughRedirects(pages);
   return {
     orphanCandidates,
     orphanDetectionUsedKnownUrls: knownUrls.length > 0,
     crawlDepthOutliers: findCrawlDepthOutliers(pages, depthThreshold),
     brokenInternalLinks: broken,
     unverifiedInternalLinks: unverified,
+    internalLinksThroughRedirects,
     sitemapIndexabilityConflicts,
     note: INCOMPLETE_CRAWL_NOTE,
   };
