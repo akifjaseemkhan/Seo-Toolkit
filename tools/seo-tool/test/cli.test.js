@@ -92,6 +92,17 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/paginated-page-2') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>Paginated Page 2</title>' +
+          '<link rel="canonical" href="/paginated-page-1">' +
+          '<link rel="next" href="/paginated-page-3">' +
+          '<link rel="prev" href="/paginated-page-1">' +
+          '</head><body>x</body></html>'
+      );
+      return;
+    }
     // A small, self-contained subtree (not linked from / or /about) so this
     // fixture can be crawled on its own without disturbing other tests'
     // "Pages fetched: N" assertions against the main / -> /about tree.
@@ -330,6 +341,46 @@ test('CLI page human-readable output omits the Hreflang line entirely when a pag
     const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
     assert.equal(code, 0);
     assert.ok(!stdout.includes('Hreflang:'), 'the home fixture page declares no hreflang tags, so the line should not appear at all');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json surfaces resolved pagination plus the canonical-conflict flag end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/paginated-page-2`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.isPaginated, true);
+    assert.equal(page.paginationNext, `${baseUrl}/paginated-page-3`);
+    assert.equal(page.paginationPrev, `${baseUrl}/paginated-page-1`);
+    assert.equal(page.paginationCanonicalConflict, true, 'the canonical points to page 1 instead of self-referencing this page');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows a Pagination line flagging the canonical conflict', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/paginated-page-2`]);
+    assert.equal(code, 0);
+    assert.ok(
+      stdout.includes(`Pagination: prev=${baseUrl}/paginated-page-1  next=${baseUrl}/paginated-page-3  (canonical points away from this page`),
+      `expected a Pagination line flagging the conflict, got:\n${stdout}`
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output omits the Pagination line entirely when a page is not paginated', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(code, 0);
+    assert.ok(!stdout.includes('Pagination:'), 'the home fixture page has no rel=next/rel=prev, so the line should not appear at all');
   } finally {
     server.close();
   }

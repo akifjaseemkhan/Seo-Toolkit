@@ -7,6 +7,8 @@ import {
   extractRobotsMeta,
   extractCanonical,
   extractHreflang,
+  extractPagination,
+  computePaginationCanonicalConflict,
   extractViewport,
   extractLangAttribute,
   extractHeadings,
@@ -263,6 +265,109 @@ test('extractHreflang is case-insensitive on rel="alternate" and tolerant of oth
   assert.equal(result.hreflangCount, 1);
 });
 
+// ---------- extractPagination / computePaginationCanonicalConflict ----------
+
+test('extractPagination finds and resolves both rel=next and rel=prev', () => {
+  const html = '<link rel="next" href="/page/3"><link rel="prev" href="/page/1">';
+  const result = extractPagination(html, 'https://example.com/page/2');
+  assert.equal(result.paginationNext, 'https://example.com/page/3');
+  assert.equal(result.paginationPrev, 'https://example.com/page/1');
+  assert.equal(result.isPaginated, true);
+});
+
+test('extractPagination handles a page with only rel=next (the first page of a series)', () => {
+  const result = extractPagination('<link rel="next" href="/page/2">', 'https://example.com/page/1');
+  assert.equal(result.paginationNext, 'https://example.com/page/2');
+  assert.equal(result.paginationPrev, null);
+  assert.equal(result.isPaginated, true);
+});
+
+test('extractPagination handles a page with only rel=prev (the last page of a series)', () => {
+  const result = extractPagination('<link rel="prev" href="/page/4">', 'https://example.com/page/5');
+  assert.equal(result.paginationNext, null);
+  assert.equal(result.paginationPrev, 'https://example.com/page/4');
+  assert.equal(result.isPaginated, true);
+});
+
+test('extractPagination reports isPaginated:false when neither tag is present', () => {
+  const result = extractPagination('<link rel="canonical" href="/x">', 'https://example.com/');
+  assert.equal(result.paginationNext, null);
+  assert.equal(result.paginationPrev, null);
+  assert.equal(result.isPaginated, false);
+});
+
+test('extractPagination resolves relative and root-relative hrefs the same way canonical/hreflang do', () => {
+  const relative = extractPagination('<link rel="next" href="page-3">', 'https://example.com/shop/page-2');
+  assert.equal(relative.paginationNext, 'https://example.com/shop/page-3');
+
+  const rootRelative = extractPagination('<link rel="next" href="/page-3">', 'https://example.com/shop/deep/page-2');
+  assert.equal(rootRelative.paginationNext, 'https://example.com/page-3');
+});
+
+test('extractPagination still reports isPaginated:true when the tag is present but its href is empty/unresolvable (the tag itself marks this as a paginated page)', () => {
+  const result = extractPagination('<link rel="next" href="">', 'https://example.com/');
+  assert.equal(result.paginationNext, null);
+  assert.equal(result.isPaginated, true);
+});
+
+test('extractPagination never throws when pageUrl is missing, even for a relative href', () => {
+  assert.doesNotThrow(() => extractPagination('<link rel="next" href="/page/2">', undefined));
+  const result = extractPagination('<link rel="next" href="/page/2">', undefined);
+  assert.equal(result.paginationNext, null, 'cannot resolve a relative href with no usable base — not paginated data lost, just unresolvable');
+  assert.equal(result.isPaginated, true);
+});
+
+test('extractPagination is case-insensitive on rel="next"/rel="prev" among other rel tokens', () => {
+  const result = extractPagination('<link rel="NEXT" href="/page/2">', 'https://example.com/');
+  assert.equal(result.paginationNext, 'https://example.com/page/2');
+});
+
+test('computePaginationCanonicalConflict flags a paginated page whose canonical points to a different URL (the "canonicalize everything to page 1" mistake)', () => {
+  const conflict = computePaginationCanonicalConflict({
+    isPaginated: true,
+    canonical: 'https://example.com/page/1',
+    pageUrl: 'https://example.com/page/2',
+  });
+  assert.equal(conflict, true);
+});
+
+test('computePaginationCanonicalConflict does not flag a paginated page with a correct, self-referencing canonical', () => {
+  const conflict = computePaginationCanonicalConflict({
+    isPaginated: true,
+    canonical: 'https://example.com/page/2',
+    pageUrl: 'https://example.com/page/2',
+  });
+  assert.equal(conflict, false);
+});
+
+test('computePaginationCanonicalConflict does not flag a non-paginated page, even with a canonical pointing elsewhere', () => {
+  const conflict = computePaginationCanonicalConflict({
+    isPaginated: false,
+    canonical: 'https://example.com/other',
+    pageUrl: 'https://example.com/page/2',
+  });
+  assert.equal(conflict, false);
+});
+
+test('computePaginationCanonicalConflict does not flag a paginated page with no canonical at all', () => {
+  const conflict = computePaginationCanonicalConflict({ isPaginated: true, canonical: null, pageUrl: 'https://example.com/page/2' });
+  assert.equal(conflict, false);
+});
+
+test('computePaginationCanonicalConflict ignores a fragment-only difference (same page, different fragment)', () => {
+  const conflict = computePaginationCanonicalConflict({
+    isPaginated: true,
+    canonical: 'https://example.com/page/2#section',
+    pageUrl: 'https://example.com/page/2',
+  });
+  assert.equal(conflict, false);
+});
+
+test('computePaginationCanonicalConflict never throws on a malformed canonical or pageUrl', () => {
+  assert.doesNotThrow(() => computePaginationCanonicalConflict({ isPaginated: true, canonical: 'not a url', pageUrl: undefined }));
+  assert.equal(computePaginationCanonicalConflict({ isPaginated: true, canonical: 'not a url', pageUrl: undefined }), false);
+});
+
 test('extractViewport reads meta viewport content', () => {
   const meta = extractMetaTags('<meta name="viewport" content="width=device-width, initial-scale=1">');
   assert.equal(extractViewport(meta), 'width=device-width, initial-scale=1');
@@ -461,4 +566,44 @@ test('extractSeoFacts resolves hreflang declarations against the real page URL a
     facts.hreflangTags.map((t) => t.href),
     ['https://example.com/en/page', 'https://example.com/fr/page', 'https://example.com/en/page', 'https://example.com/de/page']
   );
+});
+
+test('extractSeoFacts resolves pagination against the real page URL and flags the canonical-to-page-1 anti-pattern', () => {
+  const html = `<!doctype html>
+<html><head>
+  <title>Widgets — Page 2</title>
+  <link rel="canonical" href="/widgets">
+  <link rel="next" href="/widgets/page/3">
+  <link rel="prev" href="/widgets/page/1">
+</head><body></body></html>`;
+  const facts = extractSeoFacts(html, 'https://example.com/widgets/page/2', { statusCode: 200 });
+  assert.equal(facts.isPaginated, true);
+  assert.equal(facts.paginationNext, 'https://example.com/widgets/page/3');
+  assert.equal(facts.paginationPrev, 'https://example.com/widgets/page/1');
+  assert.equal(
+    facts.paginationCanonicalConflict,
+    true,
+    'the canonical points to /widgets (effectively page 1) instead of self-referencing this page — the documented anti-pattern'
+  );
+});
+
+test('extractSeoFacts reports no pagination conflict for a correctly self-referencing paginated page', () => {
+  const html = `<!doctype html>
+<html><head>
+  <title>Widgets — Page 2</title>
+  <link rel="canonical" href="/widgets/page/2">
+  <link rel="next" href="/widgets/page/3">
+  <link rel="prev" href="/widgets/page/1">
+</head><body></body></html>`;
+  const facts = extractSeoFacts(html, 'https://example.com/widgets/page/2', { statusCode: 200 });
+  assert.equal(facts.isPaginated, true);
+  assert.equal(facts.paginationCanonicalConflict, false);
+});
+
+test('extractSeoFacts reports isPaginated:false and no conflict for an ordinary, non-paginated page', () => {
+  const facts = extractSeoFacts('<html><head><title>Ordinary page</title></head></html>', 'https://example.com/about', { statusCode: 200 });
+  assert.equal(facts.isPaginated, false);
+  assert.equal(facts.paginationNext, null);
+  assert.equal(facts.paginationPrev, null);
+  assert.equal(facts.paginationCanonicalConflict, false);
 });

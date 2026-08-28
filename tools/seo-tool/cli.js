@@ -93,6 +93,9 @@ function printPageSummary(page) {
     if (page.malformedHreflang && page.malformedHreflang.length) hreflangIssues.push(`${page.malformedHreflang.length} malformed`);
     console.log(`  Hreflang: ${page.hreflangCount} tag(s), self-referencing: ${page.selfReferencingHreflang}${page.hasXDefault ? ', has x-default' : ''}${hreflangIssues.length ? ` (${hreflangIssues.join('; ')})` : ''}`);
   }
+  if (page.isPaginated) {
+    console.log(`  Pagination: prev=${page.paginationPrev || '(none)'}  next=${page.paginationNext || '(none)'}${page.paginationCanonicalConflict ? '  (canonical points away from this page — see rules/canonical-rules.md)' : ''}`);
+  }
   console.log(`  H1 count: ${page.h1Count ?? '?'}  H2 count: ${page.h2Count ?? '?'}`);
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
   console.log(`  Indexable signal: ${page.indexable === undefined ? '?' : page.indexable}${page.indexabilityReasons && page.indexabilityReasons.length ? ` (${page.indexabilityReasons.join('; ')})` : ''}`);

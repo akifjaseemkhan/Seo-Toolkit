@@ -388,6 +388,54 @@ export function extractImages(html, baseUrl) {
 }
 
 /**
+ * Extract HTML5 pagination hints: <link rel="next" href="..."> and
+ * <link rel="prev" href="...">. Both resolved to absolute URLs against
+ * pageUrl, the same way extractCanonical/extractHreflang already are.
+ *
+ * Returns:
+ *   paginationNext - resolved absolute URL of rel="next", or null if
+ *                     absent, empty, or unresolvable.
+ *   paginationPrev - resolved absolute URL of rel="prev", or null.
+ *   isPaginated    - true if either tag is present on the page, even if its
+ *                     href happened to be empty/unresolvable — the tag's
+ *                     mere presence is what marks this page as part of a
+ *                     paginated series.
+ */
+export function extractPagination(html, pageUrl) {
+  const links = findVoidTags(html, 'link');
+  const nextTag = links.find((l) => (l.rel || '').toLowerCase().split(/\s+/).includes('next'));
+  const prevTag = links.find((l) => (l.rel || '').toLowerCase().split(/\s+/).includes('prev'));
+  const resolve = (tag) => {
+    if (!tag || tag.href === undefined || !tag.href) return null;
+    return toAbsoluteUrl(tag.href, pageUrl);
+  };
+  return {
+    paginationNext: resolve(nextTag),
+    paginationPrev: resolve(prevTag),
+    isPaginated: Boolean(nextTag || prevTag),
+  };
+}
+
+/**
+ * True when a paginated page's canonical points to a DIFFERENT URL than
+ * itself — the specific, well-documented anti-pattern
+ * rules/canonical-rules.md calls out: "canonicalizing all pages to page 1
+ * is usually wrong and hides paginated content from indexing." Standard
+ * practice is a self-referencing canonical on every page of a paginated
+ * series, not just the first.
+ */
+export function computePaginationCanonicalConflict({ isPaginated, canonical, pageUrl }) {
+  if (!isPaginated || !canonical || !pageUrl) return false;
+  try {
+    const canonicalKey = new URL(canonical, pageUrl).toString().replace(/#.*$/, '');
+    const pageKey = String(pageUrl).replace(/#.*$/, '');
+    return canonicalKey !== pageKey;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Indexability is a *signal*, not a verdict — it only reflects what's
  * visible on this one response (status + meta/X-Robots-Tag directives +
  * whether canonical points elsewhere). It does NOT account for robots.txt
@@ -437,6 +485,8 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     html,
     pageUrl
   );
+  const { paginationNext, paginationPrev, isPaginated } = extractPagination(html, pageUrl);
+  const paginationCanonicalConflict = computePaginationCanonicalConflict({ isPaginated, canonical, pageUrl });
   const headings = extractHeadings(html);
   const links = extractLinks(html, pageUrl);
   const images = extractImages(html, pageUrl);
@@ -461,6 +511,10 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     selfReferencingHreflang,
     duplicateHreflangValues,
     malformedHreflang,
+    paginationNext,
+    paginationPrev,
+    isPaginated,
+    paginationCanonicalConflict,
     viewport: extractViewport(metaTags),
     lang: extractLangAttribute(html),
     robotsMetaDirectives,
