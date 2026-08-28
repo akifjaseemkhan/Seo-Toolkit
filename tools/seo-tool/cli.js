@@ -17,6 +17,7 @@ import { extractSeoFacts } from './lib/html-extract.js';
 import { crawl, fetchRobotsForOrigin } from './lib/crawler.js';
 import { buildLinkGraph } from './lib/link-graph.js';
 import { buildDuplicateContentReport } from './lib/duplicate-content.js';
+import { diffReports, isSeoToolReport } from './lib/report-diff.js';
 import { parseRobotsTxt, checkImportantPathConflicts, ROBOTS_NOT_SECURITY_NOTE } from './lib/robots.js';
 import { parseSitemap, resolveSitemapTree } from './lib/sitemap.js';
 import { inspectProject } from './lib/project-inspect.js';
@@ -216,6 +217,38 @@ function printProjectSummary(facts) {
   console.log(`\nThese are raw facts only — see workflows/discovery.md for how to interpret them.`);
 }
 
+function printDiffSummary(report) {
+  const d = report.diff;
+  console.log(`\nReport diff: ${report.meta.target}`);
+  if (!d.pages && !d.linkGraph && !d.duplicateContent) {
+    console.log('  Nothing comparable found between these two reports (no pages/linkGraph/duplicateContent section present in both).');
+    return;
+  }
+  if (d.pages) {
+    console.log(`  Pages: ${d.pages.added.length} added, ${d.pages.removed.length} removed, ${d.pages.changed.length} changed, ${d.pages.unchangedCount} unchanged`);
+  }
+  console.log(`  Regressions: ${d.regressions.length}  Improvements: ${d.improvements.length}`);
+  if (d.regressions.length) {
+    console.log('  Regressions:');
+    for (const r of d.regressions.slice(0, 20)) {
+      console.log(`    - ${r.url}: ${r.field} ${JSON.stringify(r.before)} -> ${JSON.stringify(r.after)}`);
+    }
+    if (d.regressions.length > 20) console.log(`    ... and ${d.regressions.length - 20} more (see --json for the full list)`);
+  }
+  if (d.linkGraph) {
+    const lg = d.linkGraph;
+    console.log(
+      `  Link-graph: new broken links ${lg.brokenInternalLinks.added.length}, new orphans ${lg.orphanCandidates.added.length}, ` +
+        `new redirect-hop links ${lg.internalLinksThroughRedirects.added.length}, new sitemap conflicts ${lg.sitemapIndexabilityConflicts.added.length}`
+    );
+  }
+  if (d.duplicateContent) {
+    const dc = d.duplicateContent;
+    console.log(`  Duplicate content: new duplicate-title groups ${dc.duplicateTitles.added.length}, new duplicate-description groups ${dc.duplicateMetaDescriptions.added.length}`);
+  }
+  console.log(`\nRun with --json for full machine-readable output.`);
+}
+
 // ---------- commands ----------
 
 async function cmdPage(url, flags) {
@@ -413,6 +446,47 @@ async function cmdProject(pathArg, flags) {
   await emit(report, flags, () => printProjectSummary(projectFacts));
 }
 
+/**
+ * Read and validate a JSON report file for `diff` — never a network fetch,
+ * always a local file this tool (or a compatible one) previously wrote via
+ * --json=path. Throws a clear, specific Error (caught by main()'s existing
+ * try/catch, exit 1) for every way this can go wrong: unreadable file,
+ * invalid JSON, or valid JSON that just isn't a seo-tool report.
+ */
+function readReportFile(path) {
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf-8');
+  } catch (err) {
+    throw new Error(`Could not read report file "${path}": ${err.message}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Report file "${path}" is not valid JSON: ${err.message}`);
+  }
+  if (!isSeoToolReport(parsed)) {
+    throw new Error(`"${path}" does not look like a seo-tool JSON report (missing meta.tool: "seo-tool")`);
+  }
+  return parsed;
+}
+
+async function cmdDiff(report1Path, report2Path, flags) {
+  const startedAt = new Date().toISOString();
+  const reportBefore = readReportFile(report1Path);
+  const reportAfter = readReportFile(report2Path);
+  const diffResult = diffReports(reportBefore, reportAfter);
+  const report = assembleReport({
+    command: 'diff',
+    target: `${report1Path} -> ${report2Path}`,
+    options: { report1: report1Path, report2: report2Path },
+    startedAt,
+    diffResult,
+  });
+  await emit(report, flags, () => printDiffSummary(report));
+}
+
 function printHelp() {
   console.log(`seo-tool — small, read-only local SEO inspection CLI
 
@@ -432,6 +506,9 @@ Usage:
                              [--allow-private-network] [--json[=path]]
                              (crawl + sitemap + robots + link graph)
   node cli.js project [path] [--json[=path]]
+  node cli.js diff <report1.json> <report2.json> [--json[=path]]
+                             (compare two --json=path report files —
+                             regressions, improvements, added/removed pages)
 
 A sitemap that is a <sitemapindex> is recursed into by default (bounded by
 --max-sitemaps/--max-sitemap-depth) so validation and orphan detection see
@@ -486,6 +563,10 @@ export async function main() {
         break;
       case 'project':
         await cmdProject(target, flags);
+        break;
+      case 'diff':
+        if (!positional[0] || !positional[1]) throw new Error('Usage: seo-tool diff <report1.json> <report2.json>');
+        await cmdDiff(positional[0], positional[1], flags);
         break;
       case undefined:
       case 'help':

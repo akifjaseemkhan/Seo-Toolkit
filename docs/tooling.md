@@ -78,6 +78,7 @@ node tools/seo-tool/cli.js links <url>    [--max-pages=50] [--allow-private-netw
 node tools/seo-tool/cli.js audit <url>    [--max-pages=50] [--max-sitemaps=50] [--max-sitemap-depth=5]
                                           [--allow-private-network] [--json[=path]]
 node tools/seo-tool/cli.js project [path] [--json[=path]]
+node tools/seo-tool/cli.js diff <report1.json> <report2.json> [--json[=path]]
 ```
 
 `--json` alone prints the full JSON report to stdout; `--json=path.json` writes it to a file instead. Without `--json`, each command prints a short human-readable summary.
@@ -93,6 +94,7 @@ node tools/seo-tool/cli.js project [path] [--json[=path]]
 - **`links`** — the same crawl as `crawl`, with the human summary focused on the link graph.
 - **`audit`** — runs `crawl` + fetches `robots.txt` + fetches `/sitemap.xml`, then cross-references the sitemap's URL list against the crawl's discovered internal links to find real orphan candidates (see the orphan-detection note below), and against each crawled page's indexability signal to find sitemap entries that are `noindex`, robots-blocked, or non-200 (see the sitemap/indexability conflict note below).
 - **`project`** — local, read-only facts about the project itself: `package.json` dependencies/scripts, detected package manager (from lockfile), framework config files present, `app/`/`pages/`/`wp-content/` directory conventions, SEO-related files found at conventional locations (`robots.txt`, `sitemap.xml`, etc.), and which of a small set of metadata-implementation signal strings (`generateMetadata`, `next/head`, `react-helmet`, `application/ld+json`, etc.) appear in which files. This is a plain substring scan, not code analysis — see Known Limitations.
+- **`diff`** — takes two previously-saved `--json=path` report files (not a live URL) and compares them: which pages were added/removed, which tracked fields changed on pages present in both, and the `indexable` transitions confident enough to call a regression or improvement — see the report-diff note below.
 
 ## The orphan-detection note
 
@@ -144,6 +146,19 @@ This is an exact-match check (after trimming and collapsing internal whitespace,
 
 This is `page`'s single-page facts turned into a cross-page comparison, the same way `duplicateContent` is derived alongside `linkGraph` — both are pure post-processing over a completed crawl's page list, so they're only present for `crawl`/`links`/`audit`, never `page` alone (one page can't be a duplicate of nothing).
 
+## The report-diff note
+
+`workflows/monitoring.md` calls for establishing "a full baseline snapshot first" and comparing later crawls against it, and `workflows/post-implementation.md` calls for logging a change "for future comparison" — both need a way to actually compare two previously-saved reports, not just eyeball two JSON files. `diff <report1.json> <report2.json>` reads two files previously written with `--json=path` (either the same command run twice at different times, or two different commands, as long as both are reports this tool produced) and compares them, treating `report1` as "before" and `report2` as "after."
+
+Both files must be valid JSON and must look like a report this tool produced (`meta.tool === "seo-tool"`) — a missing file, invalid JSON, or a JSON file that isn't one of this tool's reports each produce a clear error and exit 1, not a crash or a silently-empty diff.
+
+Comparison is by content, not by position or literal formatting:
+- **Pages** are matched between the two reports by normalized URL (the same equivalence `orphanCandidates`/broken-link matching already uses elsewhere in this tool), never by array order or index — reordering a report's `pages` array between runs never produces a false "changed" page. A page present in `report2` but not `report1` is `added`; the reverse is `removed`; a page present in both is compared field-by-field across a specific, bounded set of SEO-meaningful fields (`status`, `indexable`, `canonical`, `multipleCanonicals`, `title`, `metaDescription`, `robotsMetaDirectives`, `xRobotsTagDirectives`, `h1Count`, `isPaginated`, `paginationCanonicalConflict`) and reported as `changed` (with the specific fields and their before/after values) or left out of `changed` entirely if none of those tracked fields differ. `canonical` is compared via the same URL-normalization equivalence as page matching, so a canonical that's identical in every way that matters (host case, a default port written out) but differs as a literal string is correctly *not* reported as a change. Array-valued fields (`robotsMetaDirectives`, `xRobotsTagDirectives`) are compared as sets, not by order. Fields like `internalLinks`/`externalLinks`/`images`/`jsonLd` are deliberately not tracked — their ordinary churn (a new blog post adding one more internal link) is noise, not the regression signal `workflows/monitoring.md` is actually asking to catch.
+- **`linkGraph`** and **`duplicateContent`** findings (orphan candidates, broken/redirect-hop internal links, sitemap/indexability conflicts, duplicate title/description groups) are each diffed as added/removed by their own identity (URL, or `from`→`to` pair, or duplicate value) when both reports being compared have that section — a report that doesn't have a given section (e.g. diffing two `page` reports, which have no `linkGraph`) reports that section as `null` rather than guessing.
+- **`regressions`/`improvements`** are populated from exactly one signal: a page's `indexable` flipping `true → false` (regression) or `false → true` (improvement) between the two reports — the one transition `workflows/monitoring.md` itself names ("catches accidental noindex/robots regressions") as confident enough to classify. Every other tracked-field difference is reported as a plain, unjudged `changed` entry, not editorialized as good or bad — a `canonical` or `title` change doesn't have an unambiguous "better/worse" direction this tool can determine on its own.
+
+**Deliberately out of scope**: diffing the `sitemap`/`robots` sections themselves (an entry-count change there isn't inherently good or bad the way an `indexable` flip is), and any severity/prioritization judgment on the differences found — `diff` reports facts the same way every other command does; layer-3 reasoning (see "Three layers" above) about what a given change means still belongs to the workflow/rules layer, not this tool. `diff` also never sets a failing exit code based on regressions found, for the same reason — it reports, it doesn't gate.
+
 ## Known limitations (read before treating an absence as proof)
 
 - **HTML/sitemap parsing is regex-based, not a full parser or DOM.** It handles realistic, reasonably well-formed markup (any attribute order, single/double-quoted or unquoted values, mixed-case tags) but is not a substitute for a browser. Unusual or deeply malformed markup can produce a false negative (a tag present but not detected). Treat a missing result as "not found by this pass," and fall back to manual/browser inspection for anything surprising before concluding a tag truly doesn't exist.
@@ -162,7 +177,7 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
   "meta": {
     "tool": "seo-tool",
     "version": "1.0.0",
-    "command": "audit",              // page | crawl | links | sitemap | robots | audit | project
+    "command": "audit",              // page | crawl | links | sitemap | robots | audit | project | diff
     "target": "https://example.com",
     "startedAt": "2026-08-25T12:00:00.000Z",
     "finishedAt": "2026-08-25T12:00:03.500Z",
@@ -209,6 +224,14 @@ Every command produces the same top-level envelope via `assembleReport` (`tools/
   "linkGraph": { "orphanCandidates": ["..."], "orphanDetectionUsedKnownUrls": true, "crawlDepthOutliers": [ { "url": "...", "depth": 5 } ], "brokenInternalLinks": [ { "from": "...", "to": "...", "status": 404 } ], "unverifiedInternalLinks": [ { "from": "...", "to": "..." } ], "internalLinksThroughRedirects": [ { "from": "...", "to": "...", "finalUrl": "...", "redirectHops": 1 } ], "sitemapIndexabilityConflicts": [ { "url": "...", "reason": "noindex directive present ..." } ], "note": "..." },
   "duplicateContent": { "duplicateTitles": [ { "value": "...", "urls": ["...", "..."] } ], "duplicateMetaDescriptions": [ { "value": "...", "urls": ["...", "..."] } ] }, // present for crawl/links/audit — see the duplicate-content note below
   "project": { "rootDir": "...", "packageJson": { "dependencies": ["next", "react"], "scripts": {} }, "packageManager": "npm", "frameworkConfigFiles": ["next.config.js"], "directoryConventions": { "hasAppRouterDir": true }, "seoRelatedFilesFound": ["public/robots.txt"], "metadataImplementationSignals": { "generateMetadata": { "fileCount": 4, "samplePaths": ["..."] } }, "scan": { "filesWalked": 812, "truncated": false } },
+  "diff": { // present only for diff — see the report-diff note above
+    "pages": { "added": ["..."], "removed": ["..."], "changed": [ { "url": "...", "changes": [ { "field": "indexable", "before": true, "after": false } ] } ], "unchangedCount": 11 },
+    "linkGraph": { "orphanCandidates": { "added": ["..."], "removed": [] }, "brokenInternalLinks": { "added": [], "removed": [] }, "internalLinksThroughRedirects": { "added": [], "removed": [] }, "sitemapIndexabilityConflicts": { "added": [], "removed": [] } }, // null if either report lacks linkGraph
+    "duplicateContent": { "duplicateTitles": { "added": [], "removed": [] }, "duplicateMetaDescriptions": { "added": [], "removed": [] } }, // null if either report lacks duplicateContent
+    "regressions": [ { "url": "...", "field": "indexable", "before": true, "after": false } ],
+    "improvements": [],
+    "summary": { "pagesAdded": 0, "pagesRemoved": 0, "pagesChanged": 1, "regressions": 1, "improvements": 0 }
+  },
   "errors": [ { "url": "...", "message": "..." } ],
   "warnings": [ "..." ]
 }
@@ -233,6 +256,7 @@ Keep this schema in sync with `tools/seo-tool/lib/report.js` when either changes
 - The CLI entry point itself (`cli.js`) as a real subprocess: command dispatch, argument parsing, exit codes, and both output modes (`--json`, `--json=path`).
 - `lib/fetch-utils.js` directly: timeouts, redirect chains, redirect loops, capped body reads, and network-error classification.
 - Private-network blocking (`lib/url-utils.js`'s `isPrivateNetworkTarget` and its use in `fetch-utils.js`): IPv4/IPv6 range classification including boundary cases, and — against real local HTTP fixture servers, not mocks — that a redirect to a private or cloud-metadata address is blocked *before* it is fetched, at whichever hop first becomes private, with `--allow-private-network`/`allowPrivateNetwork` verified as a working, explicit opt-out.
-- `lib/report.js`'s assembled JSON report shape against the schema documented above.
+- `lib/report.js`'s assembled JSON report shape against the schema documented above, including passing a `diff` result through unchanged.
+- Report diffing (`lib/report-diff.js`) specifically: page matching by normalized URL rather than array order/position; added/removed/changed/unchanged classification across the tracked field set; array-order-insensitive comparison for `robotsMetaDirectives`-style fields; URL-equivalence comparison for `canonical` (host-case/default-port differences correctly not flagged, a genuinely different target correctly flagged); `indexable` regression/improvement classification in both directions, with every other field difference reported as a plain change, not judged; `linkGraph`/`duplicateContent` section diffing, each `null` when either report lacks that section; graceful, non-crashing handling of disjoint URL sets, unparseable URLs, minimal/partial reports, and comparing two reports of different command types; and — through the real CLI against real `--json=path` report files, including an actual `indexable` regression end-to-end — both `--json` and human-readable output, plus all of `diff`'s error paths (missing file, invalid JSON, valid JSON that isn't a seo-tool report, a missing report argument).
 
 Run it after any change to `tools/seo-tool`. GitHub Actions CI (`.github/workflows/ci.yml`) runs the same command on every push and pull request.

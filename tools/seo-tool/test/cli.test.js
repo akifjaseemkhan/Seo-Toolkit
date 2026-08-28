@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import { parseArgs, num } from '../cli.js';
@@ -641,6 +641,137 @@ test('CLI links: dispatches to the same crawl machinery with a link-graph-focuse
   } finally {
     server.close();
   }
+});
+
+// ---------- diff (report comparison, real --json=path files as input) ----------
+
+test('CLI diff --json compares two real report files and surfaces an indexable regression end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const report1Path = join(tmpDir, 'report1.json');
+  const report2Path = join(tmpDir, 'report2.json');
+  try {
+    const gen = await runCli(['page', `${baseUrl}/`, `--json=${report1Path}`]);
+    assert.equal(gen.code, 0);
+
+    // A real report file, as --json=path actually writes it, then a
+    // simulated later snapshot of the same page having regressed to
+    // non-indexable — exactly the "before/after reference point" scenario
+    // workflows/post-implementation.md describes.
+    const report1 = JSON.parse(readFileSync(report1Path, 'utf-8'));
+    assert.equal(report1.pages[0].indexable, true, 'sanity check on the real generated report');
+    const report2 = JSON.parse(JSON.stringify(report1));
+    report2.pages[0].indexable = false;
+    report2.pages[0].indexabilityReasons = ['noindex directive present (meta robots or X-Robots-Tag)'];
+    writeFileSync(report2Path, JSON.stringify(report2));
+
+    const { stdout, code } = await runCli(['diff', report1Path, report2Path, '--json']);
+    assert.equal(code, 0);
+    const diffReport = JSON.parse(stdout);
+    assert.equal(diffReport.meta.command, 'diff');
+    assert.equal(diffReport.diff.regressions.length, 1);
+    assert.equal(diffReport.diff.regressions[0].url, `${baseUrl}/`);
+    assert.equal(diffReport.diff.regressions[0].field, 'indexable');
+    assert.equal(diffReport.diff.summary.regressions, 1);
+    assert.equal(diffReport.diff.summary.improvements, 0);
+  } finally {
+    server.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff human-readable output shows regressions/improvements counts and lists the specific regression', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const report1Path = join(tmpDir, 'report1.json');
+  const report2Path = join(tmpDir, 'report2.json');
+  try {
+    const gen = await runCli(['page', `${baseUrl}/`, `--json=${report1Path}`]);
+    assert.equal(gen.code, 0);
+    const report1 = JSON.parse(readFileSync(report1Path, 'utf-8'));
+    const report2 = JSON.parse(JSON.stringify(report1));
+    report2.pages[0].indexable = false;
+    writeFileSync(report2Path, JSON.stringify(report2));
+
+    const { stdout, code } = await runCli(['diff', report1Path, report2Path]);
+    assert.equal(code, 0);
+    assert.match(stdout, /Regressions: 1\s+Improvements: 0/);
+    assert.match(stdout, new RegExp(`${baseUrl}/: indexable true -> false`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally {
+    server.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff reports zero regressions/improvements and all-unchanged when comparing a report file to itself', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const reportPath = join(tmpDir, 'report.json');
+  try {
+    const gen = await runCli(['page', `${baseUrl}/`, `--json=${reportPath}`]);
+    assert.equal(gen.code, 0);
+
+    const { stdout, code } = await runCli(['diff', reportPath, reportPath, '--json']);
+    assert.equal(code, 0);
+    const diffReport = JSON.parse(stdout);
+    assert.deepEqual(diffReport.diff.regressions, []);
+    assert.deepEqual(diffReport.diff.improvements, []);
+    assert.equal(diffReport.diff.pages.unchangedCount, 1);
+  } finally {
+    server.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff exits 1 with a clear error (no stack trace) when a report file does not exist', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const missingPath = join(tmpDir, 'does-not-exist.json');
+  const realPath = join(tmpDir, 'real.json');
+  try {
+    writeFileSync(realPath, JSON.stringify({ meta: { tool: 'seo-tool', command: 'page' }, pages: [] }));
+    const { stdout, stderr, code } = await runCli(['diff', missingPath, realPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /Could not read report file/);
+    assert.equal(/at\s+\S+\s+\(/.test(stderr), false, 'should not print a raw stack trace');
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff exits 1 with a clear error when a report file is not valid JSON', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const invalidPath = join(tmpDir, 'invalid.json');
+  const realPath = join(tmpDir, 'real.json');
+  try {
+    writeFileSync(invalidPath, 'not json at all');
+    writeFileSync(realPath, JSON.stringify({ meta: { tool: 'seo-tool', command: 'page' }, pages: [] }));
+    const { stderr, code } = await runCli(['diff', invalidPath, realPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /is not valid JSON/);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff exits 1 with a clear error when a file is valid JSON but not a seo-tool report', async () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'seo-tool-cli-test-'));
+  const notAReportPath = join(tmpDir, 'notareport.json');
+  const realPath = join(tmpDir, 'real.json');
+  try {
+    writeFileSync(notAReportPath, JSON.stringify({ foo: 'bar' }));
+    writeFileSync(realPath, JSON.stringify({ meta: { tool: 'seo-tool', command: 'page' }, pages: [] }));
+    const { stderr, code } = await runCli(['diff', notAReportPath, realPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /does not look like a seo-tool JSON report/);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('CLI diff requires both report file arguments and exits 1 with a usage message when either is missing', async () => {
+  const { stderr, code } = await runCli(['diff', 'only-one-file.json']);
+  assert.equal(code, 1);
+  assert.match(stderr, /Usage: seo-tool diff <report1.json> <report2.json>/);
 });
 
 // ---------- --allow-private-network (SSRF hardening, end-to-end through the real CLI) ----------

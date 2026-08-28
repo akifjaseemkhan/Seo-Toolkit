@@ -14,6 +14,7 @@ export function assembleReport({
   linkGraph = null,
   duplicateContent = null,
   projectFacts = null,
+  diffResult = null,
   startedAt,
   finishedAt = new Date().toISOString(),
 }) {
@@ -49,6 +50,7 @@ export function assembleReport({
     linkGraph: linkGraph || undefined,
     duplicateContent: duplicateContent || undefined,
     project: projectFacts || undefined,
+    diff: diffResult || undefined,
     errors,
     warnings,
   };

@@ -87,6 +87,12 @@ test('assembleReport passes sitemap, robots, linkGraph, duplicateContent, and pr
   assert.equal(report.project, projectFacts);
 });
 
+test('assembleReport passes a diffResult through unchanged as report.diff when supplied', () => {
+  const diffResult = { pages: null, linkGraph: null, duplicateContent: null, regressions: [], improvements: [], summary: { pagesAdded: 0, pagesRemoved: 0, pagesChanged: 0, regressions: 0, improvements: 0 } };
+  const report = assembleReport({ command: 'diff', target: 'a.json -> b.json', options: {}, startedAt: STARTED_AT, diffResult });
+  assert.equal(report.diff, diffResult);
+});
+
 test('assembleReport leaves crawl-derived sections undefined for a non-crawl command (e.g. sitemap-only)', () => {
   const report = assembleReport({
     command: 'sitemap',
@@ -101,6 +107,7 @@ test('assembleReport leaves crawl-derived sections undefined for a non-crawl com
   assert.equal(report.linkGraph, undefined);
   assert.equal(report.duplicateContent, undefined);
   assert.equal(report.project, undefined);
+  assert.equal(report.diff, undefined);
   assert.ok(report.sitemap);
 });
 
@@ -114,6 +121,7 @@ test('assembleReport handles a fully empty/partial call (no result objects at al
   assert.equal(report.linkGraph, undefined);
   assert.equal(report.duplicateContent, undefined);
   assert.equal(report.project, undefined);
+  assert.equal(report.diff, undefined);
 });
 
 test('assembleReport treats a crawlResult with zero pages as valid, not an error state', () => {
@@ -159,5 +167,6 @@ test('assembleReport JSON output never contains a literal "undefined" section fo
   assert.equal('linkGraph' in serialized, false);
   assert.equal('duplicateContent' in serialized, false);
   assert.equal('project' in serialized, false);
+  assert.equal('diff' in serialized, false);
   assert.ok('robots' in serialized);
 });
