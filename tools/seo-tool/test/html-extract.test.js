@@ -502,6 +502,44 @@ test('extractImages reports alt presence distinctly from empty alt', () => {
   assert.equal(images[2].hasAlt, false);
 });
 
+test('extractImages reports explicit width/height dimensions distinctly from missing ones', () => {
+  const html = `
+    <img src="/a.jpg" width="600" height="400">
+    <img src="/b.jpg" width="600">
+    <img src="/c.jpg">
+  `;
+  const images = extractImages(html, 'https://example.com/');
+  assert.equal(images[0].width, '600');
+  assert.equal(images[0].height, '400');
+  assert.equal(images[0].hasExplicitDimensions, true);
+  assert.equal(images[1].hasExplicitDimensions, false, 'width alone, with no height, is not enough to prevent layout shift');
+  assert.equal(images[1].width, '600');
+  assert.equal(images[1].height, null);
+  assert.equal(images[2].hasExplicitDimensions, false);
+  assert.equal(images[2].width, null);
+  assert.equal(images[2].height, null);
+});
+
+test('extractImages treats an inline aspect-ratio style as satisfying the dimensions check too', () => {
+  const html = '<img src="/a.jpg" style="aspect-ratio: 16 / 9;">';
+  const images = extractImages(html, 'https://example.com/');
+  assert.equal(images[0].hasExplicitDimensions, true, 'checklists/performance-checklist.md documents aspect-ratio as an accepted alternative to width/height');
+  assert.equal(images[0].width, null);
+  assert.equal(images[0].height, null);
+});
+
+test('extractImages captures the raw loading attribute value as evidence, without judging above/below-the-fold correctness', () => {
+  const html = `
+    <img src="/a.jpg" loading="lazy">
+    <img src="/b.jpg" loading="eager">
+    <img src="/c.jpg">
+  `;
+  const images = extractImages(html, 'https://example.com/');
+  assert.equal(images[0].loading, 'lazy');
+  assert.equal(images[1].loading, 'eager');
+  assert.equal(images[2].loading, null);
+});
+
 test('computeIndexabilitySignal flags noindex and non-200 status', () => {
   const r1 = computeIndexabilitySignal({ statusCode: 200, robotsMetaDirectives: [] });
   assert.equal(r1.indexable, true);
@@ -601,6 +639,7 @@ test('extractSeoFacts assembles a complete facts object from a realistic page', 
   assert.equal(facts.internalLinks.length, 1);
   assert.equal(facts.externalLinks.length, 1);
   assert.equal(facts.imagesMissingAlt, 0);
+  assert.equal(facts.imagesMissingDimensions, 1, 'the fixture image declares no width/height/aspect-ratio');
 });
 
 test('extractSeoFacts resolves a relative canonical against the real page URL and surfaces multiple-canonical evidence', () => {

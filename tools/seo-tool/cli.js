@@ -106,7 +106,7 @@ function printPageSummary(page) {
   const jsonLdMissingRequired = page.jsonLd ? page.jsonLd.filter((b) => b.missingRequiredProperties && b.missingRequiredProperties.length > 0).length : 0;
   console.log(`  JSON-LD blocks: ${jsonLdCount}${jsonLdMissingRequired ? ` (${jsonLdMissingRequired} missing @context/@type)` : ''}`);
   console.log(`  Internal links: ${page.internalLinks ? page.internalLinks.length : 0}  External links: ${page.externalLinks ? page.externalLinks.length : 0}`);
-  console.log(`  Images missing alt: ${page.imagesMissingAlt ?? '?'}`);
+  console.log(`  Images missing alt: ${page.imagesMissingAlt ?? '?'}  Images missing dimensions: ${page.imagesMissingDimensions ?? '?'}`);
 }
 
 function printCrawlSummary(report) {

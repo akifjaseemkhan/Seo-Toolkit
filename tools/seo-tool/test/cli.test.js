@@ -107,6 +107,16 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/images-no-dimensions') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><title>Images Without Dimensions</title></head><body>' +
+          '<img src="/a.jpg" width="600" height="400">' +
+          '<img src="/b.jpg">' +
+          '</body></html>'
+      );
+      return;
+    }
     if (req.url === '/paginated-page-2') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
@@ -497,6 +507,32 @@ test('CLI page human-readable output shows no missing-property note when every J
     assert.equal(code, 0);
     assert.ok(stdout.includes('JSON-LD blocks: 0'), `expected a plain JSON-LD line for a page with no blocks at all, got:\n${stdout}`);
     assert.ok(!stdout.includes('missing @context/@type'), 'the home fixture page has no JSON-LD at all, so there is nothing to flag');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json flags images missing explicit width/height end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/images-no-dimensions`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.images.length, 2);
+    assert.equal(page.images[0].hasExplicitDimensions, true);
+    assert.equal(page.images[1].hasExplicitDimensions, false);
+    assert.equal(page.imagesMissingDimensions, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows the images-missing-dimensions count alongside images-missing-alt', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/images-no-dimensions`]);
+    assert.equal(code, 0);
+    assert.ok(stdout.includes('Images missing dimensions: 1'), `expected the images-missing-dimensions line, got:\n${stdout}`);
   } finally {
     server.close();
   }

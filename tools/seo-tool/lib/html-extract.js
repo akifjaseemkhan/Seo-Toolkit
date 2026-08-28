@@ -416,15 +416,41 @@ export function extractLinks(html, baseUrl) {
   return { internalLinks, externalLinks, invalidHrefs };
 }
 
+// A CSS-property-name substring check on the inline `style` attribute only
+// -- not a CSS parser. `checklists/performance-checklist.md` and
+// `workflows/performance.md` name `aspect-ratio` specifically as an
+// alternative to width/height for preventing layout shift, but a real
+// aspect-ratio could equally come from an external stylesheet or CSS class
+// this tool never sees; this only catches the inline-style case, which is
+// still a real, common way it's applied directly on the tag.
+const STYLE_ASPECT_RATIO = /aspect-ratio\s*:/i;
+
 export function extractImages(html, baseUrl) {
   const imgTags = findVoidTags(html, 'img');
   return imgTags.map((attrs) => {
     const src = attrs.src ? toAbsoluteUrl(attrs.src, baseUrl) : null;
+    const width = attrs.width || null;
+    const height = attrs.height || null;
+    const hasAspectRatioStyle = STYLE_ASPECT_RATIO.test(attrs.style || '');
     return {
       src,
       alt: attrs.alt !== undefined ? attrs.alt : null,
       hasAlt: attrs.alt !== undefined,
       isEmptyAlt: attrs.alt === '',
+      width,
+      height,
+      // checklists/performance-checklist.md: "width/height (or aspect-ratio)
+      // attributes present to prevent layout shift" -- true when both width
+      // and height are present, OR an inline aspect-ratio style is (see the
+      // limitation noted above).
+      hasExplicitDimensions: Boolean((width && height) || hasAspectRatioStyle),
+      // Raw fact only, per workflows/performance.md's explicit fix-layer
+      // guidance ("width/height, loading=\"lazy\" ... before code
+      // restructuring") -- whether a *specific* image should or shouldn't
+      // be lazy-loaded depends on its position on the page (above vs.
+      // below the fold), which this static-HTML tool has no way to
+      // determine. That judgment stays with the reasoning layer.
+      loading: attrs.loading || null,
     };
   });
 }
@@ -628,5 +654,6 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     invalidHrefs: links.invalidHrefs,
     images,
     imagesMissingAlt: images.filter((i) => !i.hasAlt).length,
+    imagesMissingDimensions: images.filter((i) => !i.hasExplicitDimensions).length,
   };
 }
