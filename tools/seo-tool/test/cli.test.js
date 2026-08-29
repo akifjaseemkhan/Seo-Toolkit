@@ -770,6 +770,23 @@ test('CLI robots: dispatches correctly and reports the parsed groups', async () 
   }
 });
 
+test('CLI robots correctly reports found:false (not a false "found") when the target 404s', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout: jsonOut, code: jsonCode } = await runCli(['robots', `${baseUrl}/does-not-exist.txt`, '--json']);
+    assert.equal(jsonCode, 0);
+    const report = JSON.parse(jsonOut);
+    assert.equal(report.robots.found, false, 'a 404 response must not be reported as a found robots.txt');
+    assert.deepEqual(report.robots.groups, []);
+
+    const { stdout: humanOut, code: humanCode } = await runCli(['robots', `${baseUrl}/does-not-exist.txt`]);
+    assert.equal(humanCode, 0);
+    assert.match(humanOut, /Could not read robots\.txt: status 404/);
+  } finally {
+    server.close();
+  }
+});
+
 test('CLI sitemap: normal urlset dispatch, human output and --json agree on entry count', async () => {
   const { server, baseUrl } = await startFixtureServer();
   try {
@@ -795,6 +812,23 @@ test('CLI sitemap: a sitemapindex is recursed into by default and reports the ag
     assert.equal(report.sitemap.type, 'sitemapindex');
     assert.equal(report.sitemap.entryCount, 2, 'child urlset entries must be aggregated, not left empty');
     assert.equal(report.sitemap.sitemapsProcessed.length, 2);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI sitemap reports the real HTTP status (not a generic parse-failure message) when the target 404s', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout: jsonOut, code: jsonCode } = await runCli(['sitemap', `${baseUrl}/does-not-exist.xml`, '--json']);
+    assert.equal(jsonCode, 0);
+    const report = JSON.parse(jsonOut);
+    assert.equal(report.sitemap.type, 'invalid');
+    assert.match(report.sitemap.error, /status 404/, 'the real HTTP status should be surfaced, not a generic XML-parse-failure message');
+
+    const { stdout: humanOut, code: humanCode } = await runCli(['sitemap', `${baseUrl}/does-not-exist.xml`]);
+    assert.equal(humanCode, 0);
+    assert.match(humanOut, /Could not read sitemap: status 404/);
   } finally {
     server.close();
   }

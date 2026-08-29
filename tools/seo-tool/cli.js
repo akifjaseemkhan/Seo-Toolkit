@@ -61,13 +61,23 @@ async function emit(report, flags, printSummary) {
 
 function readLocalOrFetch(target, timeoutMs, allowPrivateNetwork = false) {
   if (/^https?:\/\//i.test(target)) {
-    return fetchFollowingRedirects(target, { timeoutMs, allowPrivateNetwork }).then((result) => ({
-      text: result.error ? null : result.body,
-      source: target,
-      finalUrl: result.finalUrl,
-      status: result.status,
-      fetchError: result.error ? result.error.message : null,
-    }));
+    return fetchFollowingRedirects(target, { timeoutMs, allowPrivateNetwork }).then((result) => {
+      // A non-2xx/3xx status (e.g. a 404's custom error page) is not a
+      // fetch-level error in fetchFollowingRedirects's model — it's a real,
+      // successfully-received response — but its body is not the file this
+      // command asked for. Treating it as "no content" here mirrors
+      // fetchRobotsForOrigin's existing, correct condition in
+      // lib/crawler.js, so `robots`/`sitemap` targeting a URL behave the
+      // same way whether they're called standalone or via crawl/audit.
+      const failed = Boolean(result.error) || !result.status || result.status >= 400;
+      return {
+        text: failed ? null : result.body,
+        source: target,
+        finalUrl: result.finalUrl,
+        status: result.status,
+        fetchError: result.error ? result.error.message : failed ? `status ${result.status}` : null,
+      };
+    });
   }
   try {
     const text = readFileSync(target, 'utf-8');

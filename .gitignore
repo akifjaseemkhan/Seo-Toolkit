@@ -1,11 +1,14 @@
 # Dependencies
 node_modules/
 
-# Package manager logs
+# Package manager logs / any other stray local diagnostic log (e.g. a
+# `git-credential-manager diagnose` dump left in the repo root) — these can
+# contain machine environment variables and should never be tracked.
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
 
 # Environment / secrets — never commit real env files
 .env

@@ -119,6 +119,18 @@ test('isPrivateNetworkTarget catches IPv4-mapped IPv6 addresses that encode a bl
   assert.equal(isPrivateNetworkTarget('http://[::ffff:8.8.8.8]/'), false, 'IPv4-mapped public address stays allowed');
 });
 
+test('isPrivateNetworkTarget catches NAT64-mapped IPv6 addresses that encode a blocked target (RFC 6052 well-known prefix)', () => {
+  // 64:ff9b::/96 is the NAT64 well-known prefix -- a second, standard way
+  // an IPv4 address ends up embedded in an IPv6 literal, functionally
+  // reachable (not just a string coincidence) on networks with a
+  // NAT64/DNS64 gateway configured. Same shape as the ::ffff:0:0/96 check
+  // above, just a different prefix.
+  assert.equal(isPrivateNetworkTarget('http://[64:ff9b::169.254.169.254]/'), true);
+  assert.equal(isPrivateNetworkTarget('http://[64:ff9b::10.0.0.1]/'), true);
+  assert.equal(isPrivateNetworkTarget('http://[64:ff9b::127.0.0.1]/'), false, 'NAT64-mapped loopback stays allowed');
+  assert.equal(isPrivateNetworkTarget('http://[64:ff9b::8.8.8.8]/'), false, 'NAT64-mapped public address stays allowed');
+});
+
 test('isPrivateNetworkTarget is defeated by hostnames that merely look like an IP (DNS resolution is explicitly out of scope)', () => {
   // Documents the known, deliberate limitation rather than silently hoping
   // nobody notices it: a *hostname* is never resolved, only literal IPs are

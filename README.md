@@ -30,7 +30,7 @@ The repository is two layers that stay strictly separate, reasoned over by an AI
 
 **Knowledge layer** — the SEO reasoning itself, and the only place decisions are made: [`rules/`](rules), [`workflows/`](workflows), [`checklists/`](checklists), [`frameworks/`](frameworks), [`templates/`](templates).
 
-**Fact-gathering layer** — [`tools/seo-tool`](tools/seo-tool), a read-only CLI (`crawl`, `page`, `links`, `sitemap`, `robots`, `audit`, plus a `project` command for local source inspection) that fetches real pages, `sitemap.xml`, and `robots.txt`, then extracts structured JSON evidence — see [docs/tooling.md](docs/tooling.md). **These tools only collect and report facts. They never decide severity, priority, or what to do about a finding** — that interpretation always happens in the knowledge layer, applied by the agent.
+**Fact-gathering layer** — [`tools/seo-tool`](tools/seo-tool), a read-only CLI (`crawl`, `page`, `links`, `sitemap`, `robots`, `audit`, a `project` command for local source inspection, and a `diff` command to compare two saved reports for regressions) that fetches real pages, `sitemap.xml`, and `robots.txt`, then extracts structured JSON evidence — see [docs/tooling.md](docs/tooling.md). **These tools only collect and report facts. They never decide severity, priority, or what to do about a finding** — that interpretation always happens in the knowledge layer, applied by the agent.
 
 The agent reasons over both layers together and runs this loop against the target project:
 
@@ -224,7 +224,7 @@ See [docs/usage.md](docs/usage.md). Just ask for SEO work in plain language ("au
 
 ## Testing
 
-`tools/seo-tool` has an automated test suite covering its extractors (title, description, canonical, robots meta, headings, JSON-LD), URL normalization, `robots.txt` parsing and rule evaluation, sitemap parsing and validation (including `<sitemapindex>` recursion, loop protection, and same-origin enforcement), link-graph orphan/broken-link detection, a full crawl against a local HTTP fixture server, the CLI entry point itself (command dispatch, argument parsing, exit codes, output modes), and the JSON report schema. Run it with:
+`tools/seo-tool` has an automated test suite covering its extractors (title, description, canonical, hreflang, pagination, robots meta vs. `X-Robots-Tag` conflicts, JSON-LD including required-property validation, headings, Open Graph/canonical mismatch detection, image dimensions, charset/favicon), URL normalization, private-network (SSRF) protection including redirect-hop enforcement, `robots.txt` parsing and rule evaluation, sitemap parsing and validation (including `<sitemapindex>` recursion, loop protection, and same-origin enforcement), cross-page analysis (link-graph orphan/broken-link/redirect-hop detection, duplicate title/meta-description detection, hreflang reciprocity), report diffing for regression detection, a full crawl against a local HTTP fixture server, the CLI entry point itself (command dispatch, argument parsing, exit codes, output modes), and the JSON report schema. See [docs/tooling.md](docs/tooling.md#testing) for the full breakdown. Run it with:
 
 ```bash
 cd tools/seo-tool

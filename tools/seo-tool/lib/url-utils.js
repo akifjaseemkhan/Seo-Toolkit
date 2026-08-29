@@ -149,6 +149,20 @@ function isPrivateIPv6(addrNoBrackets) {
     return isPrivateIPv4Octets([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
   }
 
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052) — another standard way
+  // an IPv4 address ends up embedded in an IPv6 literal, functionally
+  // reachable (not just a string coincidence) on networks with a
+  // NAT64/DNS64 gateway configured, which some IPv6-only and mobile-carrier
+  // networks run. Same embedded-IPv4 shape as the IPv4-mapped check above,
+  // just a different prefix: groups 0-1 are the fixed "64:ff9b" prefix,
+  // groups 2-5 are zero, groups 6-7 are the embedded IPv4 address.
+  const isNat64Mapped = hex(groups[0]) === 0x64 && hex(groups[1]) === 0xff9b && groups.slice(2, 6).every((g) => hex(g) === 0);
+  if (isNat64Mapped) {
+    const hi = hex(groups[6]);
+    const lo = hex(groups[7]);
+    return isPrivateIPv4Octets([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff]);
+  }
+
   const first = hex(groups[0]);
   if (first >= 0xfe80 && first <= 0xfebf) return true; // fe80::/10 — link-local
   if (first >= 0xfc00 && first <= 0xfdff) return true; // fc00::/7 — unique-local (IPv6's RFC1918 equivalent)
