@@ -69,7 +69,7 @@ node tools/seo-tool/cli.js crawl <url>    [--max-pages=50] [--delay=250] [--conc
                                           [--timeout=10000] [--include-external] [--no-robots]
                                           [--allow-private-network] [--json[=path]]
 node tools/seo-tool/cli.js page <url>     [--timeout=10000] [--allow-private-network] [--json[=path]]
-node tools/seo-tool/cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
+node tools/seo-tool/cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20] [--delay=250]
                                                [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse]
                                                [--allow-private-network] [--json[=path]]
 node tools/seo-tool/cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot]

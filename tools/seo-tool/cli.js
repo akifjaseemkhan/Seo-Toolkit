@@ -521,7 +521,7 @@ Usage:
                              [--timeout=10000] [--include-external] [--no-robots]
                              [--allow-private-network] [--json[=path]]
   node cli.js page <url>     [--timeout=10000] [--allow-private-network] [--json[=path]]
-  node cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20]
+  node cli.js sitemap <urlOrPath> [--check-status] [--max-checks=20] [--delay=250]
                              [--max-sitemaps=50] [--max-sitemap-depth=5] [--no-recurse]
                              [--allow-private-network] [--json[=path]]
   node cli.js robots <urlOrPath>  [--important=/a,/b] [--user-agent=Googlebot]
