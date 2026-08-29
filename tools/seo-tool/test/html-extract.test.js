@@ -9,6 +9,7 @@ import {
   extractHreflang,
   extractPagination,
   computePaginationCanonicalConflict,
+  computeOgUrlCanonicalMismatch,
   extractViewport,
   extractLangAttribute,
   extractHeadings,
@@ -368,6 +369,42 @@ test('computePaginationCanonicalConflict ignores a fragment-only difference (sam
 test('computePaginationCanonicalConflict never throws on a malformed canonical or pageUrl', () => {
   assert.doesNotThrow(() => computePaginationCanonicalConflict({ isPaginated: true, canonical: 'not a url', pageUrl: undefined }));
   assert.equal(computePaginationCanonicalConflict({ isPaginated: true, canonical: 'not a url', pageUrl: undefined }), false);
+});
+
+test('computeOgUrlCanonicalMismatch flags a genuine disagreement between og:url and canonical', () => {
+  const result = computeOgUrlCanonicalMismatch({
+    ogUrl: 'https://example.com/old-url',
+    canonical: 'https://example.com/new-url',
+    pageUrl: 'https://example.com/new-url',
+  });
+  assert.equal(result, true);
+});
+
+test('computeOgUrlCanonicalMismatch does not flag agreement, or when either value is absent', () => {
+  assert.equal(
+    computeOgUrlCanonicalMismatch({ ogUrl: 'https://example.com/page', canonical: 'https://example.com/page', pageUrl: 'https://example.com/page' }),
+    false
+  );
+  assert.equal(computeOgUrlCanonicalMismatch({ ogUrl: null, canonical: 'https://example.com/page', pageUrl: 'https://example.com/page' }), false, 'no og:url declared — nothing to compare');
+  assert.equal(computeOgUrlCanonicalMismatch({ ogUrl: 'https://example.com/page', canonical: null, pageUrl: 'https://example.com/page' }), false, 'no canonical — a separately-reported problem, not an og:url mismatch');
+});
+
+test('computeOgUrlCanonicalMismatch resolves a relative og:url against pageUrl before comparing', () => {
+  const result = computeOgUrlCanonicalMismatch({ ogUrl: '/widgets', canonical: 'https://example.com/widgets', pageUrl: 'https://example.com/widgets' });
+  assert.equal(result, false, 'a relative og:url resolving to the same absolute URL as canonical is not a mismatch');
+});
+
+test('computeOgUrlCanonicalMismatch ignores a fragment-only difference', () => {
+  const result = computeOgUrlCanonicalMismatch({
+    ogUrl: 'https://example.com/page#section',
+    canonical: 'https://example.com/page',
+    pageUrl: 'https://example.com/page',
+  });
+  assert.equal(result, false);
+});
+
+test('computeOgUrlCanonicalMismatch never throws on a malformed og:url', () => {
+  assert.doesNotThrow(() => computeOgUrlCanonicalMismatch({ ogUrl: 'not a url at all', canonical: 'https://example.com/page', pageUrl: 'https://example.com/page' }));
 });
 
 test('extractViewport reads meta viewport content', () => {
@@ -752,4 +789,27 @@ test('extractSeoFacts reports no conflict when meta and X-Robots-Tag agree, or w
 
   const neither = extractSeoFacts('<html><head><title>Plain</title></head></html>', 'https://example.com/c', { statusCode: 200 });
   assert.equal(neither.robotsDirectivesConflict, false);
+});
+
+test('extractSeoFacts flags a real og:url/canonical mismatch end-to-end', () => {
+  const html =
+    '<html><head><link rel="canonical" href="https://example.com/new-url">' +
+    '<meta property="og:url" content="https://example.com/old-url"></head></html>';
+  const facts = extractSeoFacts(html, 'https://example.com/new-url', { statusCode: 200 });
+  assert.equal(facts.openGraph.url, 'https://example.com/old-url');
+  assert.equal(facts.ogUrlCanonicalMismatch, true);
+});
+
+test('extractSeoFacts reports no og:url/canonical mismatch when they agree, or when either is absent', () => {
+  const agreeing = extractSeoFacts(
+    '<html><head><link rel="canonical" href="https://example.com/page"><meta property="og:url" content="https://example.com/page"></head></html>',
+    'https://example.com/page',
+    { statusCode: 200 }
+  );
+  assert.equal(agreeing.ogUrlCanonicalMismatch, false);
+
+  const noOgUrl = extractSeoFacts('<html><head><link rel="canonical" href="https://example.com/page"></head></html>', 'https://example.com/page', {
+    statusCode: 200,
+  });
+  assert.equal(noOgUrl.ogUrlCanonicalMismatch, false);
 });

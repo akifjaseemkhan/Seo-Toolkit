@@ -49,6 +49,7 @@ const TRACKED_PAGE_FIELDS = [
   'h1Count',
   'isPaginated',
   'paginationCanonicalConflict',
+  'ogUrlCanonicalMismatch',
 ];
 
 function valuesEqual(a, b) {

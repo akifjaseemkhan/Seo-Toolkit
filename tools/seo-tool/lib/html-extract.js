@@ -504,6 +504,33 @@ export function computePaginationCanonicalConflict({ isPaginated, canonical, pag
 }
 
 /**
+ * checklists/metadata-checklist.md requires "og:url — matches canonical".
+ * `og:url` and `<link rel="canonical">` are two independent signals for
+ * "the one true URL of this page" -- a mismatch between them is a real,
+ * common setup mistake (a stale og:url left over from a URL-structure
+ * change, or a canonical rewrite that never touched the OG tags).
+ *
+ * `ogUrl` is resolved to an absolute URL against `pageUrl` the same way
+ * every other href in this file is (og:url is supposed to already be
+ * absolute per the Open Graph spec, but this stays robust to a relative
+ * value rather than assuming). Only evaluated when BOTH `og:url` and
+ * `canonical` are actually present -- a missing canonical is already its
+ * own, separately-reported problem, not an og:url-specific one.
+ */
+export function computeOgUrlCanonicalMismatch({ ogUrl, canonical, pageUrl }) {
+  if (!ogUrl || !canonical) return false;
+  const ogUrlAbsolute = toAbsoluteUrl(ogUrl, pageUrl);
+  if (!ogUrlAbsolute) return false;
+  try {
+    const ogKey = ogUrlAbsolute.replace(/#.*$/, '');
+    const canonicalKey = canonical.replace(/#.*$/, '');
+    return ogKey !== canonicalKey;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Indexability is a *signal*, not a verdict — it only reflects what's
  * visible on this one response (status + meta/X-Robots-Tag directives +
  * whether canonical points elsewhere). It does NOT account for robots.txt
@@ -619,6 +646,8 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     finalUrl: pageUrl,
   });
   const robotsDirectivesConflictResult = computeRobotsDirectivesConflict(robotsMetaDirectives, xRobotsTagDirectives);
+  const openGraph = extractOpenGraph(metaTags);
+  const ogUrlCanonicalMismatch = computeOgUrlCanonicalMismatch({ ogUrl: openGraph.url, canonical, pageUrl });
 
   return {
     title: extractTitle(html),
@@ -646,7 +675,8 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     indexable: indexability.indexable,
     indexabilityReasons: indexability.reasons,
     ...headings,
-    openGraph: extractOpenGraph(metaTags),
+    openGraph,
+    ogUrlCanonicalMismatch,
     twitter: extractTwitterCard(metaTags),
     jsonLd: extractJsonLd(html),
     internalLinks: links.internalLinks,

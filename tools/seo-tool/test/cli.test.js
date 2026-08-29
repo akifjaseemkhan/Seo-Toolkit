@@ -107,6 +107,13 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/og-url-mismatch') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        `<html><head><title>OG Mismatch</title><link rel="canonical" href="${origin}/og-url-mismatch"><meta property="og:url" content="${origin}/old-og-url"></head><body>x</body></html>`
+      );
+      return;
+    }
     if (req.url === '/images-no-dimensions') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
@@ -533,6 +540,35 @@ test('CLI page human-readable output shows the images-missing-dimensions count a
     const { stdout, code } = await runCli(['page', `${baseUrl}/images-no-dimensions`]);
     assert.equal(code, 0);
     assert.ok(stdout.includes('Images missing dimensions: 1'), `expected the images-missing-dimensions line, got:\n${stdout}`);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json flags a real og:url/canonical mismatch end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const { stdout, code } = await runCli(['page', `${baseUrl}/og-url-mismatch`, '--json']);
+    assert.equal(code, 0);
+    const page = JSON.parse(stdout).pages[0];
+    assert.equal(page.canonical, `${baseUrl}/og-url-mismatch`);
+    assert.equal(page.openGraph.url, `${baseUrl}/old-og-url`);
+    assert.equal(page.ogUrlCanonicalMismatch, true);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows a MISMATCH line when og:url disagrees with canonical', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const mismatch = await runCli(['page', `${baseUrl}/og-url-mismatch`]);
+    assert.equal(mismatch.code, 0);
+    assert.ok(mismatch.stdout.includes('MISMATCH: og:url'), `expected a MISMATCH line, got:\n${mismatch.stdout}`);
+
+    const noMismatch = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(noMismatch.code, 0);
+    assert.ok(!noMismatch.stdout.includes('MISMATCH'), 'the home fixture page declares no og:url at all, so there is nothing to compare');
   } finally {
     server.close();
   }

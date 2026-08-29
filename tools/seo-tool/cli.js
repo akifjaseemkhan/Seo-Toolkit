@@ -89,6 +89,9 @@ function printPageSummary(page) {
   console.log(`  Title: ${page.title || '(missing)'}`);
   console.log(`  Meta description: ${page.metaDescription || '(missing)'}`);
   console.log(`  Canonical: ${page.canonical || '(missing)'}${page.multipleCanonicals ? ` (${page.canonicalCount} canonical tags declared — only the first is used; see canonicalRawHrefs in --json for all of them)` : ''}`);
+  if (page.ogUrlCanonicalMismatch) {
+    console.log(`  MISMATCH: og:url (${page.openGraph.url}) does not match canonical (${page.canonical})`);
+  }
   if (page.hreflangCount) {
     const hreflangIssues = [];
     if (page.duplicateHreflangValues && page.duplicateHreflangValues.length) hreflangIssues.push(`duplicate values: ${page.duplicateHreflangValues.join(', ')}`);
