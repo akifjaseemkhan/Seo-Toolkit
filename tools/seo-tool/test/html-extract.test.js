@@ -11,7 +11,9 @@ import {
   computePaginationCanonicalConflict,
   computeOgUrlCanonicalMismatch,
   extractViewport,
+  extractCharset,
   extractLangAttribute,
+  extractFavicon,
   extractHeadings,
   extractOpenGraph,
   extractTwitterCard,
@@ -417,6 +419,42 @@ test('extractLangAttribute reads html lang', () => {
   assert.equal(extractLangAttribute('<html><head></head></html>'), null);
 });
 
+test('extractCharset reads the modern HTML5 <meta charset> form', () => {
+  const meta = extractMetaTags('<meta charset="utf-8">');
+  assert.equal(extractCharset(meta), 'utf-8');
+});
+
+test('extractCharset falls back to the legacy http-equiv Content-Type form', () => {
+  const meta = extractMetaTags('<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">');
+  assert.equal(extractCharset(meta), 'iso-8859-1');
+});
+
+test('extractCharset returns null when neither form is present', () => {
+  assert.equal(extractCharset(extractMetaTags('<meta name="viewport" content="width=device-width">')), null);
+});
+
+test('extractFavicon finds an icon-family link and resolves its href', () => {
+  const result = extractFavicon('<link rel="icon" href="/favicon.png">', 'https://example.com/page');
+  assert.equal(result.hasFavicon, true);
+  assert.equal(result.faviconHref, 'https://example.com/favicon.png');
+});
+
+test('extractFavicon recognizes shortcut icon and apple-touch-icon rel variants', () => {
+  assert.equal(extractFavicon('<link rel="shortcut icon" href="/favicon.ico">', 'https://example.com/').hasFavicon, true);
+  assert.equal(extractFavicon('<link rel="apple-touch-icon" href="/apple-icon.png">', 'https://example.com/').hasFavicon, true);
+});
+
+test('extractFavicon reports hasFavicon:false when no icon link is declared', () => {
+  const result = extractFavicon('<link rel="canonical" href="/page">', 'https://example.com/page');
+  assert.equal(result.hasFavicon, false);
+  assert.equal(result.faviconHref, null);
+});
+
+test('extractFavicon treats a present tag with an empty href as not having a usable favicon', () => {
+  const result = extractFavicon('<link rel="icon" href="">', 'https://example.com/page');
+  assert.equal(result.hasFavicon, false);
+});
+
 test('extractHeadings counts and captures H1/H2 text', () => {
   const html = '<h1>Main Title</h1><p>x</p><h2>Section A</h2><h2>Section B</h2>';
   const h = extractHeadings(html);
@@ -677,6 +715,17 @@ test('extractSeoFacts assembles a complete facts object from a realistic page', 
   assert.equal(facts.externalLinks.length, 1);
   assert.equal(facts.imagesMissingAlt, 0);
   assert.equal(facts.imagesMissingDimensions, 1, 'the fixture image declares no width/height/aspect-ratio');
+  assert.equal(facts.charset, null, 'this fixture declares no <meta charset>');
+  assert.equal(facts.hasFavicon, false, 'this fixture declares no favicon link');
+  assert.equal(facts.faviconHref, null);
+});
+
+test('extractSeoFacts resolves charset and favicon presence when declared', () => {
+  const html = '<html><head><meta charset="utf-8"><link rel="icon" href="/favicon.png"></head></html>';
+  const facts = extractSeoFacts(html, 'https://example.com/page', { statusCode: 200 });
+  assert.equal(facts.charset, 'utf-8');
+  assert.equal(facts.hasFavicon, true);
+  assert.equal(facts.faviconHref, 'https://example.com/favicon.png');
 });
 
 test('extractSeoFacts resolves a relative canonical against the real page URL and surfaces multiple-canonical evidence', () => {

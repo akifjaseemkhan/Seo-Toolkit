@@ -107,6 +107,13 @@ function startFixtureServer() {
       );
       return;
     }
+    if (req.url === '/with-charset-and-favicon') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(
+        '<html><head><meta charset="utf-8"><link rel="icon" href="/favicon.png"><title>Has Charset And Favicon</title></head><body>x</body></html>'
+      );
+      return;
+    }
     if (req.url === '/og-url-mismatch') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(
@@ -569,6 +576,41 @@ test('CLI page human-readable output shows a MISMATCH line when og:url disagrees
     const noMismatch = await runCli(['page', `${baseUrl}/`]);
     assert.equal(noMismatch.code, 0);
     assert.ok(!noMismatch.stdout.includes('MISMATCH'), 'the home fixture page declares no og:url at all, so there is nothing to compare');
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page --json surfaces charset and favicon presence end-to-end', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const withBoth = await runCli(['page', `${baseUrl}/with-charset-and-favicon`, '--json']);
+    assert.equal(withBoth.code, 0);
+    const pageWithBoth = JSON.parse(withBoth.stdout).pages[0];
+    assert.equal(pageWithBoth.charset, 'utf-8');
+    assert.equal(pageWithBoth.hasFavicon, true);
+    assert.equal(pageWithBoth.faviconHref, `${baseUrl}/favicon.png`);
+
+    const withoutEither = await runCli(['page', `${baseUrl}/`, '--json']);
+    assert.equal(withoutEither.code, 0);
+    const pageWithoutEither = JSON.parse(withoutEither.stdout).pages[0];
+    assert.equal(pageWithoutEither.charset, null);
+    assert.equal(pageWithoutEither.hasFavicon, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('CLI page human-readable output shows the Charset/Favicon line', async () => {
+  const { server, baseUrl } = await startFixtureServer();
+  try {
+    const withBoth = await runCli(['page', `${baseUrl}/with-charset-and-favicon`]);
+    assert.equal(withBoth.code, 0);
+    assert.ok(withBoth.stdout.includes('Charset: utf-8  Favicon: declared'), `expected the Charset/Favicon line, got:\n${withBoth.stdout}`);
+
+    const withoutEither = await runCli(['page', `${baseUrl}/`]);
+    assert.equal(withoutEither.code, 0);
+    assert.ok(withoutEither.stdout.includes('Charset: (missing)  Favicon: (not declared)'), `expected the missing-case line, got:\n${withoutEither.stdout}`);
   } finally {
     server.close();
   }

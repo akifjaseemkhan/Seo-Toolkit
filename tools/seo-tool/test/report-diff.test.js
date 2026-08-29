@@ -113,6 +113,15 @@ test('diffReports tracks a newly-appeared ogUrlCanonicalMismatch as a real chang
   assert.deepEqual(result.pages.changed[0].changes, [{ field: 'ogUrlCanonicalMismatch', before: false, after: true }]);
 });
 
+test('diffReports tracks a lost charset declaration and a lost favicon as real changes', () => {
+  const before = report({ pages: [page('https://example.com/a', { charset: 'utf-8', hasFavicon: true })] });
+  const after = report({ pages: [page('https://example.com/a', { charset: null, hasFavicon: false })] });
+  const result = diffReports(before, after);
+  assert.equal(result.pages.changed.length, 1);
+  const fields = result.pages.changed[0].changes.map((c) => c.field).sort();
+  assert.deepEqual(fields, ['charset', 'hasFavicon']);
+});
+
 test('diffReports treats robotsMetaDirectives/xRobotsTagDirectives arrays as equal regardless of order', () => {
   const before = report({ pages: [page('https://example.com/a', { robotsMetaDirectives: ['noindex', 'nofollow'] })] });
   const after = report({ pages: [page('https://example.com/a', { robotsMetaDirectives: ['nofollow', 'noindex'] })] });

@@ -132,6 +132,27 @@ export function extractViewport(metaTags) {
 }
 
 /**
+ * checklists/metadata-checklist.md's "Required baseline" section requires
+ * "<meta charset=\"utf-8\"> present". Handles both the modern HTML5 form
+ * (`<meta charset="...">`, captured directly as a `charset` attribute by
+ * parseAttributes) and the legacy `<meta http-equiv="Content-Type"
+ * content="text/html; charset=...">` form still seen in older/CMS-generated
+ * markup. Returns the raw declared charset value (e.g. "utf-8"), or null
+ * if neither form is present -- a presence/value fact, not a judgment on
+ * whether the declared value is correct.
+ */
+export function extractCharset(metaTags) {
+  const charsetTag = metaTags.find((m) => m.charset !== undefined);
+  if (charsetTag) return charsetTag.charset || null;
+  const contentTypeTag = findMeta(metaTags, 'http-equiv', 'content-type');
+  if (contentTypeTag && contentTypeTag.content) {
+    const match = contentTypeTag.content.match(/charset\s*=\s*([^\s;]+)/i);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
  * Extract every <link rel="canonical"> declaration on the page. Real search
  * engines only honor one canonical signal per page — a page with more than
  * one declaration creates real ambiguity about which target actually wins,
@@ -173,6 +194,32 @@ export function extractCanonical(html, pageUrl) {
     canonicalCount: canonicalLinks.length,
     multipleCanonicals: canonicalLinks.length > 1,
   };
+}
+
+/**
+ * checklists/metadata-checklist.md's "Required baseline" section requires
+ * "Favicon present and loading". This checks presence only -- whether a
+ * favicon link is actually declared in the markup, resolved to an absolute
+ * URL the same way canonical/hreflang hrefs are. Matches any icon-family
+ * rel value (`icon`, `shortcut icon`, `apple-touch-icon`,
+ * `apple-touch-icon-precomposed`, `mask-icon`, etc.) via a substring check
+ * on each space-separated rel token, rather than an exhaustive list.
+ *
+ * "...and loading" is deliberately NOT verified here -- confirming the
+ * favicon URL actually resolves would mean an extra network request per
+ * page fetched, by default, for every page this tool visits. That's a
+ * bigger behavioral change than a fact-gathering pass should make silently;
+ * every other optional extra verification in this tool (e.g. sitemap
+ * `--check-status`) is an explicit opt-in, not automatic. A page with no
+ * declared favicon link at all falls back to the browser-default
+ * `/favicon.ico` convention, which this function also does not check for
+ * the same reason.
+ */
+export function extractFavicon(html, pageUrl) {
+  const links = findVoidTags(html, 'link');
+  const iconLink = links.find((l) => (l.rel || '').toLowerCase().split(/\s+/).some((t) => t.includes('icon')));
+  if (!iconLink || !iconLink.href) return { hasFavicon: false, faviconHref: null };
+  return { hasFavicon: true, faviconHref: toAbsoluteUrl(iconLink.href, pageUrl) };
 }
 
 const XDEFAULT = 'x-default';
@@ -667,7 +714,9 @@ export function extractSeoFacts(html, pageUrl, { statusCode = null, xRobotsTagHe
     isPaginated,
     paginationCanonicalConflict,
     viewport: extractViewport(metaTags),
+    charset: extractCharset(metaTags),
     lang: extractLangAttribute(html),
+    ...extractFavicon(html, pageUrl),
     robotsMetaDirectives,
     xRobotsTagDirectives,
     robotsDirectivesConflict: robotsDirectivesConflictResult.conflict,

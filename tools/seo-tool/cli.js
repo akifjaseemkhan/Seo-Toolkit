@@ -101,6 +101,7 @@ function printPageSummary(page) {
   if (page.isPaginated) {
     console.log(`  Pagination: prev=${page.paginationPrev || '(none)'}  next=${page.paginationNext || '(none)'}${page.paginationCanonicalConflict ? '  (canonical points away from this page — see rules/canonical-rules.md)' : ''}`);
   }
+  console.log(`  Charset: ${page.charset || '(missing)'}  Favicon: ${page.hasFavicon ? 'declared' : '(not declared)'}`);
   console.log(`  H1 count: ${page.h1Count ?? '?'}  H2 count: ${page.h2Count ?? '?'}`);
   console.log(`  Robots meta: ${(page.robotsMetaDirectives || []).join(', ') || '(none)'}`);
   console.log(`  X-Robots-Tag: ${(page.xRobotsTagDirectives || []).join(', ') || '(none)'}${page.robotsDirectivesConflict ? `  CONFLICT: ${page.robotsDirectivesConflictReasons.join('; ')}` : ''}`);
